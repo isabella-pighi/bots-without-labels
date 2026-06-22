@@ -1,0 +1,43 @@
+[project]
+name = "bots-without-labels"
+version = "0.1.0"
+description = "Dependency-light bot click anomaly detection with a local HTTP dashboard."
+requires-python = ">=3.11"
+dependencies = [
+    "kneed>=0.8.6",
+    "matplotlib>=3.10",
+    "numpy>=2",
+    "pandas>=2",
+    "scikit-learn>=1.7",
+    "scipy>=1.11",
+    "tldextract>=5.3.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "black>=26.5.1",
+    "playwright>=1.60.0",
+    "pylint>=4.0.5",
+    "pytest>=8",
+]
+
+[project.optional-dependencies]
+eif = ["isotree>=0.6.1"]
+
+[tool.setuptools.packages.find]
+include = ["bots_without_labels*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.pylint."messages control"]
+# Test names carry behaviour intent in this project; requiring docstrings on
+# every test function creates boilerplate rather than useful documentation.
+disable = [
+    "missing-function-docstring",
+]

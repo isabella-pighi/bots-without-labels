@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# uv
+.uv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+
+# Generated analysis output (regenerate with the CLI or notebook)
+run-output/
+
+# Input logs are not committed; supply them locally (see data/README.md).
+data/*.tsv
+data/*.csv
+data/*.json
+data/*.jsonl
+
+# Local notes
+*.local
