@@ -29,17 +29,17 @@ are stale. The team structure creates checkpoints for both risks.
 Human owner
     |
     v
-Product Manager (Codex CLI)
+Product Manager (Codex CLI, OpenAI)
     |
-    +--> ML Engineer (implementer, Codex CLI)
+    +--> ML Engineer (implementer, Claude Code, Claude)
     |        |
     |        v
-    |    ML Engineer (reviewer, Claude Code)
+    |    ML Engineer (reviewer, Codex CLI, OpenAI)
     |
-    +--> Data Scientist (Codex CLI)
+    +--> Data Scientist (Claude Code, Claude)
              |
              v
-         Data Scientist (reviewer, Claude Code)
+         Data Scientist (reviewer, Codex CLI, OpenAI)
 ```
 
 HCOM provides the message bus and agent tags. The repository provides the shared
@@ -53,8 +53,8 @@ working state. Git provides the durable change history.
 | Product Manager | Routes and prioritises tasks, waits for review, commits, pushes | Implement, test, edit, or self-review |
 | ML Engineer (implementer) | Changes loader, features, rules, scoring, pipeline, tests | Push directly in normal flow |
 | ML Engineer (reviewer) | Reviews correctness, method, probability claims | Edit files by default |
-| Data Scientist | Changes analysis notebook, narrative, docs, and copy | Push directly in normal flow |
-| Data Scientist (reviewer) | Critiques clarity, interpretation honesty, and documentation truth | Edit files by default |
+| Data Scientist | Tracks the literature, grounds the methodology, and changes the analysis notebook, narrative, docs, and copy | Push directly in normal flow |
+| Data Scientist (reviewer) | Critiques theoretical grounding and literature fit, clarity, interpretation honesty, and documentation truth | Edit files by default |
 
 The product manager boundary is the most important control. If the product
 manager starts making code or documentation changes, it becomes an unreviewed
@@ -75,12 +75,20 @@ supportability. This pair asks questions such as:
 - Can the run be reproduced from source?
 - Are tests and logs sufficient for a future maintainer?
 
-The data scientist pair owns the analysis narrative and methodology: the
+The data scientist pair owns the theoretical approach and the analysis
+narrative: the relevant academic and industry literature (for example isolation
+forests and the Extended Isolation Forest, unsupervised anomaly detection, weak
+supervision and label injection, score calibration, and bot and fraud-detection
+practice), the grounding of the detection methodology in that literature, the
 analysis notebook, feature and label-injection design, interpretation honesty on
 unlabelled data, visualisation, README content, diagrams, examples, and
-accessibility. The two data scientists critique each other's work, asking
-questions such as:
+accessibility. They ground feature design, the rule families, the anomaly-model
+choice, threshold selection, and the label-injection evaluation in the
+literature, and flag where the approach diverges from or is unsupported by it.
+The two data scientists critique each other's work, asking questions such as:
 
+- Is the methodology grounded in the cited literature, and are divergences flagged?
+- Are the theoretical claims consistent with the cited evidence?
 - Can a technical reader understand the result without being a data scientist?
 - Are assumptions and limitations visible near the claims they affect?
 - Does the analysis avoid overclaiming on unlabelled data?
@@ -203,6 +211,8 @@ ML engineer review should cover:
 
 Data scientist review should cover:
 
+- theoretical grounding in the cited academic and industry literature, and
+  whether claims match that evidence
 - clarity for a wide technical audience
 - British English, plain definitions, and concrete examples
 - interpretation honesty on unlabelled data

@@ -12,11 +12,11 @@ remains in control of scope and final decisions.
 
 | Role | Tool | Owns |
 |---|---|---|
-| Product Manager | Codex CLI | Task routing, prioritisation, review gates, commits, pushes |
-| ML Engineer (implementer) | Codex CLI | Loader, features, rules, scoring, pipeline, tests |
-| ML Engineer (reviewer) | Claude Code | Correctness, method, engineering quality |
-| Data Scientist | Codex CLI | Analysis notebook, narrative, README, documentation |
-| Data Scientist (reviewer) | Claude Code | Clarity, interpretation honesty, mutual critique |
+| Product Manager | Codex CLI (OpenAI) | Task routing, prioritisation, review gates, commits, pushes |
+| ML Engineer (implementer) | Claude Code (Claude) | Loader, features, rules, scoring, pipeline, tests |
+| ML Engineer (reviewer) | Codex CLI (OpenAI) | Correctness, method, engineering quality |
+| Data Scientist | Claude Code (Claude) | Literature, theoretical grounding, methodology, analysis notebook, narrative, README, documentation |
+| Data Scientist (reviewer) | Codex CLI (OpenAI) | Theoretical grounding and literature fit, clarity, interpretation honesty, mutual critique |
 
 The product manager does not code. It routes, prioritises, and integrates
 reviewed work.
@@ -77,7 +77,7 @@ Analysis-narrative task:
 ```text
 @data-scientist- @data-scientist-reviewer- TASK bots-without-labels-<id>
 Goal: <one sentence>
-Scope: analysis notebook/narrative/copy/docs
+Scope: literature/theory/methodology/analysis notebook/narrative/copy/docs
 Acceptance: <observable success criteria>
 Review mode: blocking findings first, then residual risks
 ```

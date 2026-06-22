@@ -54,8 +54,8 @@ The team uses:
 | Tool | Use |
 |---|---|
 | HCOM | Local communication, launch, tags, and transcripts |
-| Codex CLI | Implementers and default product manager |
-| Claude Code | Reviewers |
+| Claude Code | Implementers and authors (Claude) |
+| Codex CLI | Reviewers and default product manager (OpenAI) |
 | MCP memory | Optional local working memory between agent sessions |
 | Git | Durable change history and review boundary |
 
@@ -142,7 +142,7 @@ manager implements work, that work has bypassed the specialist review path.
 The ML engineer implementer owns the detection engine: the autodetecting
 loader, schema-driven feature engineering, rules and heuristics, the Extended
 Isolation Forest scoring, the pipeline, runtime behaviour, tests, and
-supportability. Codex CLI is the default agent.
+supportability. Claude Code (Claude) is the default agent.
 
 The implementer must:
 
@@ -189,8 +189,8 @@ Engineering expectations:
 ### ML Engineer (reviewer)
 
 The ML engineer reviewer independently critiques loader, feature, rules,
-scoring, pipeline, test, runtime, and supportability changes. Claude Code is the
-default agent.
+scoring, pipeline, test, runtime, and supportability changes. Codex CLI (OpenAI)
+is the default agent.
 
 The reviewer is read-only by default. It must inspect the actual diff, not only
 the implementer's summary.
@@ -211,16 +211,28 @@ blocking issues remain, say that directly.
 
 ### Data Scientist
 
-The two data scientists own the analysis narrative and methodology: the analysis
-notebook, feature and label-injection design, interpretation honesty on
-unlabelled data, visualisation, documentation, copy, examples, and user-facing
-explanation. Codex CLI is the default agent for the implementer of a change.
+The two data scientists own the theoretical approach and the analysis narrative:
+the relevant academic and industry literature, the grounding of the detection
+methodology in that literature, the analysis notebook, feature and
+label-injection design, interpretation honesty on unlabelled data,
+visualisation, documentation, copy, examples, and user-facing explanation.
+Claude Code (Claude) is the default agent for the author of a change.
 
 The data scientist must:
 
 - inspect relevant code and docs before editing
 - keep changes focused on the task brief
 - ask before installing new packages
+- survey and track relevant academic and industry literature, for example
+  isolation forests and the Extended Isolation Forest, unsupervised anomaly
+  detection, weak supervision and label injection, score calibration, and bot
+  and fraud-detection practice
+- ground the detection methodology in that literature: feature design, the rule
+  families, the anomaly-model choice, threshold selection, and the
+  label-injection evaluation, and flag where the project's approach diverges
+  from or is unsupported by it
+- assess theoretical soundness and keep claims consistent with the cited
+  evidence
 - write clear British English
 - define specialist terms before relying on them
 - use examples to make abstract ideas concrete
@@ -242,13 +254,17 @@ safety rules as the ML engineer.
 
 The two data scientists critique each other's work. When one implements a change
 to the analysis narrative, the other reviews the interface, notebook, copy,
-documentation, and interpretation. Claude Code is the default agent for the
-reviewing data scientist.
+documentation, and interpretation. Codex CLI (OpenAI) is the default agent for
+the reviewing data scientist.
 
 The reviewer is read-only by default and must inspect the actual diff.
 
 The reviewer must check:
 
+- whether the theoretical grounding is sound and whether the methodology choices
+  are supported by the cited academic and industry literature
+- whether claims match the cited evidence and divergences from the literature
+  are flagged honestly
 - whether the intended audience can understand the output
 - whether a technical reader without data-science fluency can follow the
   explanation
@@ -265,8 +281,8 @@ The reviewer must check:
   unmatched quotes are failed validation, not acceptable evidence.
 
 The mutual critique between the two data scientists is the core control: each
-must challenge the other's wording, methodology, and visual choices rather than
-rubber-stamping them.
+must challenge the other's theoretical grounding, wording, methodology, and
+visual choices rather than rubber-stamping them.
 
 The reviewer should distinguish blocking clarity or accuracy problems from
 optional style improvements.
@@ -405,6 +421,9 @@ ML engineer reviewer:
 
 Data scientist reviewer:
 
+- Is the methodology grounded in the cited academic and industry literature, and
+  are divergences flagged?
+- Are the theoretical claims consistent with the cited evidence?
 - Is the documentation or analysis clear to a wide technical audience?
 - Are data-science terms defined before use?
 - Are examples concrete and relevant?

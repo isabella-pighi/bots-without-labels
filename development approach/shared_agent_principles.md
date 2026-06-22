@@ -154,8 +154,18 @@ Required principles:
   uses them
 - model or threshold changes must refresh affected artefacts and explain the
   change in plain terms
+- the detection methodology should be grounded in the relevant academic and
+  industry literature, for example isolation forests and the Extended Isolation
+  Forest, unsupervised anomaly detection, weak supervision and label injection,
+  score calibration, and bot and fraud-detection practice; where the approach
+  diverges from or is unsupported by that literature, say so
 
-Unsupported probability or fraud claims are blocking issues.
+Unsupported probability or fraud claims are blocking issues. Theoretical claims
+that are not consistent with the cited evidence are blocking issues. The data
+scientists own surveying the literature, grounding the methodology in it, and
+assessing theoretical soundness, while keeping their existing duties for the
+analysis notebook, label-injection design, interpretation honesty, and
+visualisation.
 
 ## 10. Analysis And Documentation Quality
 

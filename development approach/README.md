@@ -40,11 +40,11 @@ The team has six roles:
 | Role | Default tool | Responsibility |
 |---|---|---|
 | Human owner | Human | Sets goals, approves trade-offs, and owns final decisions |
-| Product Manager | Codex CLI | Routes and prioritises work, enforces review gates, commits, and pushes |
-| ML Engineer (implementer) | Codex CLI | Detection engine: loader, features, rules, scoring, pipeline, and tests |
-| ML Engineer (reviewer) | Claude Code | Engineering quality, methodology, and probability critique of the engine |
-| Data Scientist | Codex CLI | Analysis narrative, methodology, label-injection design, and visualisation |
-| Data Scientist (reviewer) | Claude Code | Critiques the analysis narrative, interpretation honesty, and visualisation |
+| Product Manager | Codex CLI (OpenAI) | Routes and prioritises work, enforces review gates, commits, and pushes |
+| ML Engineer (implementer) | Claude Code (Claude) | Detection engine: loader, features, rules, scoring, pipeline, and tests |
+| ML Engineer (reviewer) | Codex CLI (OpenAI) | Engineering quality, methodology, and probability critique of the engine |
+| Data Scientist | Claude Code (Claude) | Theoretical approach and literature, detection methodology grounding, analysis narrative, label-injection design, and visualisation |
+| Data Scientist (reviewer) | Codex CLI (OpenAI) | Critiques the theoretical grounding and literature fit, the analysis narrative, interpretation honesty, and visualisation |
 
 The product manager is deliberately not a coder. It must not edit application
 files, write tests, rewrite documentation, or resolve reviewer findings itself.
@@ -73,10 +73,18 @@ The two pairs reflect those risks:
   schema-driven features, rules and heuristics, the Extended Isolation Forest
   scoring, the pipeline, and tests. It focuses on correctness, data-science
   method, runtime behaviour, and engineering standards.
-- The data scientist pair owns the analysis narrative and methodology: the
-  analysis notebook, feature and label-injection design, interpretation honesty
-  on unlabelled data, and visualisation. The two data scientists critique each
-  other's work so the narrative stays clear and defensible.
+- The data scientist pair owns the theoretical approach and the analysis
+  narrative: the relevant academic and industry literature (for example
+  isolation forests and the Extended Isolation Forest, unsupervised anomaly
+  detection, weak supervision and label injection, score calibration, and
+  bot and fraud-detection practice), the grounding of the detection methodology
+  in that literature, the analysis notebook, feature and label-injection design,
+  interpretation honesty on unlabelled data, and visualisation. They ground
+  feature design, the rule families, the anomaly-model choice, threshold
+  selection, and the label-injection evaluation in the literature, flag where
+  the approach diverges from or is unsupported by it, and keep claims consistent
+  with the cited evidence. The two data scientists critique each other's work so
+  the theory and narrative stay sound and defensible.
 
 This split keeps implementation and review independent while avoiding a large
 or heavy process.
@@ -159,7 +167,7 @@ For analysis-narrative work:
 ```text
 @data-scientist- @data-scientist-reviewer- TASK bots-without-labels-<id>
 Goal: <one sentence>
-Scope: <analysis notebook, features, label injection, copy, or user journey>
+Scope: <literature, theoretical grounding, methodology, analysis notebook, features, label injection, copy, or user journey>
 Acceptance: <observable success criteria>
 Constraints: <audience, accessibility, evidence, style>
 Review mode: blocking findings first, then residual risks
