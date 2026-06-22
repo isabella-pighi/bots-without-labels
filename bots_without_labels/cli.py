@@ -77,7 +77,7 @@ def run_doctor(
         f"Python {python_version}; required >= 3.10",
     )
 
-    for module_name in ("numpy", "pandas", "scipy", "isotree"):
+    for module_name in ("numpy", "pandas", "scipy"):
         add_check(
             f"import:{module_name}",
             _module_available(module_name),
@@ -88,6 +88,18 @@ def run_doctor(
         "package:bots_without_labels",
         _module_available("bots_without_labels"),
         "Bots Without Labels package is importable",
+    )
+
+    # The Extended Isolation Forest backend is optional; without it the detector
+    # falls back to a dependency-free anomaly score, so this never fails the run.
+    eif_available = _module_available("isotree")
+    add_check(
+        "optional:isotree",
+        True,
+        "Extended Isolation Forest backend available"
+        if eif_available
+        else "isotree not installed; using the built-in fallback "
+        "(install with: uv sync --extra eif)",
     )
 
     add_check(
@@ -132,12 +144,22 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser(
-        "run", help="Run classifiers and write artifacts"
+        "run", help="Run detection on a log and write predictions and artefacts"
     )
-    run_parser.add_argument("--input", required=True, help="Path to raw click TSV")
+    run_parser.add_argument("--input", required=True, help="Path to a CSV/TSV/JSON log")
     run_parser.add_argument(
         "--output-dir", default=".", help="Directory for artifacts and predictions.tsv"
     )
+
+    generate_parser = subparsers.add_parser(
+        "generate", help="Write a synthetic example log with planted bots"
+    )
+    generate_parser.add_argument(
+        "--output", required=True, help="Path to write the generated TSV log"
+    )
+    generate_parser.add_argument("--legit", type=int, default=900, help="Legitimate events")
+    generate_parser.add_argument("--bots", type=int, default=100, help="Bot events")
+    generate_parser.add_argument("--seed", type=int, default=0, help="Deterministic seed")
 
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -162,6 +184,25 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         summary = run_pipeline(input_path, Path(args.output_dir))
         print(json.dumps(summary, indent=2))
+        return 0
+    if args.command == "generate":
+        # pylint: disable=import-outside-toplevel
+        from .synthetic import generate, write_log
+
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        log = generate(n_legit=args.legit, n_bots=args.bots, seed=args.seed)
+        write_log(output, log.frame)
+        print(
+            json.dumps(
+                {
+                    "output": str(output),
+                    "total_events": int(log.frame.shape[0]),
+                    "planted_bots": int(log.is_bot.sum()),
+                },
+                indent=2,
+            )
+        )
         return 0
     if args.command == "doctor":
         input_path = Path(args.input) if args.input else None

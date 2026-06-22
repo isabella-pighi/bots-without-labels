@@ -62,6 +62,7 @@ class FeatureContext:
             row's categorical context.
         dt_std: Per-row inter-arrival standard deviation within the context.
         dt_cv: Per-row inter-arrival coefficient of variation within the context.
+        group_size: Per-row size of the row's categorical context group.
         categorical_columns / numeric_columns / text_columns / boolean_columns:
             The columns used, by role.
         timestamp_column: The primary timestamp column, or ``None``.
@@ -75,6 +76,7 @@ class FeatureContext:
     burst_count: np.ndarray | None = None
     dt_std: np.ndarray | None = None
     dt_cv: np.ndarray | None = None
+    group_size: np.ndarray | None = None
     categorical_columns: list[str] = field(default_factory=list)
     numeric_columns: list[str] = field(default_factory=list)
     text_columns: list[str] = field(default_factory=list)
@@ -189,10 +191,11 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         add("same_time__conc", np.log1p(ts_counts), "burst")
 
         keys = _joint_keys(frame, categoricals) if categoricals else np.zeros(n_rows)
-        burst, dt_std, dt_cv = _temporal_context(times, keys)
+        burst, dt_std, dt_cv, group_size = _temporal_context(times, keys)
         context.burst_count = burst
         context.dt_std = dt_std
         context.dt_cv = dt_cv
+        context.group_size = group_size
         add(f"burst{BURST_WINDOW_SECONDS}s__conc", np.log1p(burst), "burst")
         add("dt__std", np.log1p(dt_std), "timing")
         add("dt__cv", np.log1p(dt_cv), "timing")
@@ -251,8 +254,8 @@ def _unique_char_ratio(value: str) -> float:
 
 def _temporal_context(
     times: pd.Series, keys: np.ndarray, window_seconds: int = BURST_WINDOW_SECONDS
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return per-row burst counts and inter-arrival regularity within groups.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return per-row burst counts, inter-arrival regularity, and group sizes.
 
     Rows are grouped by their categorical context. Within each group, sorted by
     time, every row receives the number of peers inside a centred time window
@@ -265,6 +268,7 @@ def _temporal_context(
     burst = np.ones(n_rows, dtype=float)
     dt_std = np.full(n_rows, SPARSE_TIMING_SENTINEL, dtype=float)
     dt_cv = np.full(n_rows, SPARSE_TIMING_SENTINEL, dtype=float)
+    group_size = np.ones(n_rows, dtype=float)
 
     # Normalise to nanoseconds: pandas may parse timestamps at second/us/ns
     # resolution, so the raw int64 view is not a fixed unit.
@@ -278,6 +282,8 @@ def _temporal_context(
             groups[keys[index]].append(index)
 
     for members in groups.values():
+        for index in members:
+            group_size[index] = len(members)
         order = sorted(members, key=lambda index: nanos[index])
         seconds = [nanos[index] / 1e9 for index in order]
         left = 0
@@ -298,4 +304,4 @@ def _temporal_context(
             for index in order:
                 dt_std[index] = std
                 dt_cv[index] = cv
-    return burst, dt_std, dt_cv
+    return burst, dt_std, dt_cv, group_size
