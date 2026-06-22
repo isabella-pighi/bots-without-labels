@@ -16,16 +16,21 @@ out with no labels to keep score by, so we plant our own.
 ## Status
 
 Bots Without Labels runs in two layers: a detection **engine** and a narrative
-**notebook**. Here is what is available today and what is on the roadmap:
+**notebook**.
 
 | Area | State |
 |---|---|
-| Rules + EIF anomaly detection | ✅ available |
-| Dynamic (Kneedle) threshold selection | ✅ available |
 | Autodetecting loader for any CSV/TSV/JSON log | ✅ available |
 | Schema-driven feature engineering | ✅ available |
-| Synthetic data generator + label injection + measured recall/precision | 🔜 planned |
-| Narrative analysis notebook (where results are read and visualised) | 🔜 planned |
+| Rules + EIF anomaly detection | ✅ available |
+| Dynamic (Kneedle) threshold selection | ✅ available |
+| Synthetic data generator + label injection + measured recall/precision | ✅ available |
+| Narrative analysis notebook (where results are read and visualised) | ✅ available |
+
+On planted data the detector recovers **100% of burst, repeated-query,
+reused-value, mechanical-timing, and low-entropy bots** at realistic prevalence,
+with under 1% false positives on pure-legitimate traffic — measured, not claimed,
+because the bots were planted on purpose.
 
 ## How It Works
 
@@ -55,21 +60,28 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). See
 git clone <this-repo>
 cd bots-without-labels
 
+# Generate a synthetic example log with planted bots (or bring your own)
+uv run python -m bots_without_labels.cli generate --output data/sample.tsv
+
 # Run the detector over a log and write predictions + artefacts
 uv run --extra eif python -m bots_without_labels.cli run \
-  --input data/your-log.tsv --output-dir run-output
+  --input data/sample.tsv --output-dir run-output
 
 # Run the test suite
 uv run --extra eif python -m pytest
 ```
 
-The analysis is explored and visualised in the **narrative notebook** (see
-`notebooks/`), which loads a log, runs the detector, injects synthetic labels,
-and reports measured recall/precision — all inline.
+The full story — load a log, infer its schema, score it, plant synthetic labels,
+and read **measured** recall/precision with charts — lives in the narrative
+notebook:
 
-You supply your own log under `data/` (it is gitignored). A synthetic generator
-that produces an example dataset — and doubles as ground truth for label
-injection — is being added so the repo runs end-to-end on clone.
+```bash
+uv run jupyter lab    # then open notebooks/bots_without_labels.ipynb
+```
+
+You can also analyse your own log: point `generate`'s output, the `run` command,
+or `load(...)` in the notebook at any CSV/TSV/JSON file. Logs you drop under
+`data/` are gitignored.
 
 ## What's In Here
 

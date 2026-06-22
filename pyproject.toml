@@ -22,6 +22,10 @@ dev = [
     "black>=26.5.1",
     "pylint>=4.0.5",
     "pytest>=8",
+    "jupyterlab>=4",
+    "nbconvert>=7",
+    "nbformat>=5",
+    "ipykernel>=6",
 ]
 
 [project.optional-dependencies]
