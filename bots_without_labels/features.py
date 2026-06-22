@@ -149,14 +149,18 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
 
     # Joint categorical context concentration (device-cluster analogue).
     if len(categoricals) >= 2:
-        context_counts = _joint_counts(frame, categoricals)
+        context_counts, context_distinct = _joint_counts(frame, categoricals)
         context.context_count = context_counts
+        context.count_values["__context__"] = context_distinct
         add("context__conc", np.log1p(context_counts), "concentration")
 
     # Numeric value and exact-value repetition.
     for name in numerics:
         numeric = pd.to_numeric(frame[name], errors="coerce")
-        filled = numeric.fillna(numeric.median())
+        # Median-fill missing values; fall back to 0 when the whole column is
+        # missing (median is NaN) so the matrix never carries NaN into scoring.
+        median = numeric.median()
+        filled = numeric.fillna(0.0 if pd.isna(median) else median)
         add(f"{name}__val", filled.to_numpy(dtype=float), "value")
         counts, distinct = _value_counts(frame[name])
         context.row_counts[name] = counts
@@ -186,8 +190,9 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
     if timestamp is not None:
         times = pd.to_datetime(frame[timestamp], errors="coerce")
         add("hour", times.dt.hour.fillna(0).to_numpy(dtype=float), "time")
-        ts_counts, _ = _value_counts(frame[timestamp])
+        ts_counts, ts_distinct = _value_counts(frame[timestamp])
         context.timestamp_count = ts_counts
+        context.count_values["__timestamp__"] = ts_distinct
         add("same_time__conc", np.log1p(ts_counts), "burst")
 
         keys = _joint_keys(frame, categoricals) if categoricals else np.zeros(n_rows)
@@ -217,18 +222,29 @@ def _stringify(series: pd.Series) -> pd.Series:
 
 
 def _value_counts(series: pd.Series) -> tuple[np.ndarray, list[int]]:
-    """Return per-row occurrence counts and the distinct-value group sizes."""
+    """Return per-row occurrence counts and the distinct-value group sizes.
+
+    Missing values are excluded: a missing cell gets a count of 0 (so it never
+    counts as concentration, repetition, or a same-instant burst), and the
+    missing bucket is dropped from the distinct group sizes.
+    """
 
     text = _stringify(series)
     counts = text.value_counts()
     per_row = text.map(counts).to_numpy(dtype=float)
-    return per_row, [int(value) for value in counts.tolist()]
+    missing = (text == _MISSING).to_numpy()
+    per_row[missing] = 0.0
+    distinct = [int(value) for key, value in counts.items() if key != _MISSING]
+    return per_row, distinct
 
 
-def _joint_counts(frame: pd.DataFrame, columns: list[str]) -> np.ndarray:
+def _joint_counts(
+    frame: pd.DataFrame, columns: list[str]
+) -> tuple[np.ndarray, list[int]]:
     keys = _joint_keys(frame, columns)
     counts = Counter(keys.tolist())
-    return np.array([counts[key] for key in keys], dtype=float)
+    per_row = np.array([counts[key] for key in keys], dtype=float)
+    return per_row, [int(value) for value in counts.values()]
 
 
 def _joint_keys(frame: pd.DataFrame, columns: list[str]) -> np.ndarray:

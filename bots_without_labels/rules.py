@@ -14,8 +14,8 @@ mirroring how an analyst weighs evidence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from math import ceil
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -108,33 +108,22 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     conc_cols = _eligible(context.categorical_columns, context)
     numeric_cols = _eligible(context.numeric_columns, context)
 
-    text_thr = {
-        c: _adaptive(context.count_values[c], TEXT_REPEAT_FLOOR, n_rows)
-        for c in text_cols
-    }
-    conc_thr = {
-        c: _adaptive(context.count_values[c], CONCENTRATION_FLOOR, n_rows)
-        for c in conc_cols
-    }
-    num_thr = {
-        c: _adaptive(context.count_values[c], NUMERIC_REUSE_FLOOR, n_rows)
-        for c in numeric_cols
-    }
+    counts = context.count_values
+    text_thr = {c: _adaptive(counts.get(c), TEXT_REPEAT_FLOOR) for c in text_cols}
+    conc_thr = {c: _adaptive(counts.get(c), CONCENTRATION_FLOOR) for c in conc_cols}
+    num_thr = {c: _adaptive(counts.get(c), NUMERIC_REUSE_FLOOR) for c in numeric_cols}
+    context_thr = _adaptive(counts.get("__context__"), CONCENTRATION_FLOOR)
+    same_instant_thr = _adaptive(counts.get("__timestamp__"), SAME_INSTANT_FLOOR)
     thresholds.update(
         {
             "text_repeat": text_thr,
             "categorical_concentration": conc_thr,
             "numeric_reuse": num_thr,
-            "same_instant": SAME_INSTANT_FLOOR,
+            "context_cluster": context_thr,
+            "same_instant": same_instant_thr,
             "local_burst": LOCAL_BURST_FLOOR,
         }
     )
-
-    context_thr = _distinct_percentile(context.context_count, CONCENTRATION_FLOOR)
-    same_instant_thr = max(
-        SAME_INSTANT_FLOOR, _distinct_percentile(context.timestamp_count, 0)
-    )
-    thresholds["context_cluster"] = context_thr
 
     entropy = _entropy_lookup(feature_set)
     lengths = {
@@ -287,27 +276,32 @@ def _eligible(
     return out
 
 
-def _adaptive(count_values: list[int], absolute_floor: int, n_rows: int) -> int:
-    percentile = _nearest_rank(count_values, COUNT_PERCENTILE)
-    return max(absolute_floor, percentile)
+def _adaptive(count_values, floor: int) -> int:
+    """Return an adaptive count threshold, bounded below by ``floor``.
 
+    The percentile is taken over the **distinct group sizes** (how often each
+    distinct value occurs), not over per-row counts. This has two important
+    properties:
 
-def _distinct_percentile(counts, floor: int) -> int:
-    """Return the percentile of distinct count values, bounded below by floor."""
+    * On a flat/uniform log almost every value is unique, so the percentile is
+      ~1 and the ``floor`` governs.
+    * On a heavy-tailed log (a power-law of value popularity, as real logs have)
+      the percentile rises above the floor, so a rule fires only on the
+      genuinely over-represented tail and the false-positive rate stays bounded
+      as the batch grows.
 
-    if counts is None:
+    Crucially it is robust to the bot fraction: bots that repeat are a *few
+    distinct* values, so they barely move the distinct-size distribution and
+    therefore do not inflate the very threshold meant to catch them.
+    """
+
+    if not count_values:
         return floor
-    distinct = sorted({int(value) for value in counts})
-    percentile = _nearest_rank(distinct, COUNT_PERCENTILE) if distinct else 0
-    return max(floor, percentile)
-
-
-def _nearest_rank(values: list[int], percentile: float) -> int:
-    positive = sorted(value for value in values if value > 0)
-    if not positive:
-        return 0
-    index = max(0, ceil(len(positive) * percentile) - 1)
-    return int(positive[index])
+    ordered = sorted(int(value) for value in count_values if value > 0)
+    if not ordered:
+        return floor
+    index = max(0, ceil(len(ordered) * COUNT_PERCENTILE) - 1)
+    return max(floor, ordered[index])
 
 
 def _entropy_lookup(feature_set: FeatureSet) -> dict[str, np.ndarray]:

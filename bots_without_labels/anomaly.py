@@ -46,7 +46,9 @@ def _standardize(matrix: np.ndarray) -> np.ndarray:
     means = matrix.mean(axis=0)
     stds = matrix.std(axis=0)
     stds[stds == 0.0] = 1.0
-    return (matrix - means) / stds
+    scaled = (matrix - means) / stds
+    # Defensive: never pass NaN/inf to the forest (missing_action="fail").
+    return np.nan_to_num(scaled, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def _extended_isolation_forest(scaled: np.ndarray, *, seed: int) -> np.ndarray | None:
