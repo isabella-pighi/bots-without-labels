@@ -15,16 +15,17 @@ out with no labels to keep score by, so we plant our own.
 
 ## Status
 
-This repository is being generalised from a single ad-click pipeline into a tool
-that runs on arbitrary logs. Current state:
+Bots Without Labels runs in two layers: a detection **engine** and a narrative
+**notebook**. Here is what is available today and what is on the roadmap:
 
 | Area | State |
 |---|---|
-| Rules + EIF detection on click logs | ✅ working |
-| Dynamic (Kneedle) threshold selection | ✅ working |
-| Autodetecting loader for any CSV/TSV/JSON log | 🚧 in progress |
-| Synthetic data generator + label injection + measured recall/precision | 🚧 in progress |
-| Narrative analysis notebook (the way you read results and visualise) | 🚧 in progress |
+| Rules + EIF anomaly detection | ✅ available |
+| Dynamic (Kneedle) threshold selection | ✅ available |
+| Autodetecting loader for any CSV/TSV/JSON log | ✅ available |
+| Schema-driven feature engineering | ✅ available |
+| Synthetic data generator + label injection + measured recall/precision | 🔜 planned |
+| Narrative analysis notebook (where results are read and visualised) | 🔜 planned |
 
 ## How It Works
 

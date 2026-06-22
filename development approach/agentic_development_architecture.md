@@ -14,14 +14,14 @@ evidence gathering.
 The model is deliberately conservative:
 
 - implementation and review are separate
-- the orchestrator coordinates but does not code
+- the product manager routes and prioritises but does not code
 - commits and pushes happen only after review approval or explicit human waiver
 - durable decisions are written to the repository, not left only in memory
 
 This matters for Bots Without Labels because the project blends code and interpretation.
-The classifier can run successfully while the explanation is still misleading,
-or the report can read well while the underlying artefacts are stale. The team
-structure creates checkpoints for both risks.
+The detection engine can run successfully while the explanation is still
+misleading, or the analysis notebook can read well while the underlying outputs
+are stale. The team structure creates checkpoints for both risks.
 
 ## System Overview
 
@@ -29,17 +29,17 @@ structure creates checkpoints for both risks.
 Human owner
     |
     v
-Orchestrator (Codex CLI)
+Product Manager (Codex CLI)
     |
-    +--> Algorithm coder (Codex CLI)
+    +--> ML Engineer (implementer, Codex CLI)
     |        |
     |        v
-    |    Algorithm reviewer (Claude Code)
+    |    ML Engineer (reviewer, Claude Code)
     |
-    +--> UX coder (Codex CLI)
+    +--> Data Scientist (Codex CLI)
              |
              v
-         UX reviewer (Claude Code)
+         Data Scientist (reviewer, Claude Code)
 ```
 
 HCOM provides the message bus and agent tags. The repository provides the shared
@@ -50,83 +50,74 @@ working state. Git provides the durable change history.
 | Role | Does | Does not do |
 |---|---|---|
 | Human owner | Sets priorities and approves trade-offs | Delegate final accountability |
-| Orchestrator | Routes tasks, waits for review, commits, pushes | Implement, test, edit, or self-review |
-| Algorithm coder | Changes pipeline, features, classifiers, tests | Push directly in normal flow |
-| Algorithm reviewer | Reviews correctness, method, probability claims | Edit files by default |
-| UX coder | Changes dashboard, report, docs, and copy | Push directly in normal flow |
-| UX reviewer | Reviews clarity, accessibility, and documentation truth | Edit files by default |
+| Product Manager | Routes and prioritises tasks, waits for review, commits, pushes | Implement, test, edit, or self-review |
+| ML Engineer (implementer) | Changes loader, features, rules, scoring, pipeline, tests | Push directly in normal flow |
+| ML Engineer (reviewer) | Reviews correctness, method, probability claims | Edit files by default |
+| Data Scientist | Changes analysis notebook, narrative, docs, and copy | Push directly in normal flow |
+| Data Scientist (reviewer) | Critiques clarity, interpretation honesty, and documentation truth | Edit files by default |
 
-The orchestrator boundary is the most important control. If the orchestrator
-starts making code or documentation changes, it becomes an unreviewed
+The product manager boundary is the most important control. If the product
+manager starts making code or documentation changes, it becomes an unreviewed
 implementer. That breaks the review model.
 
-## Why Two Specialist Pairs
+## Why Two Pairs
 
 Bots Without Labels has two natural domains.
 
-The algorithm and engineering domain covers parsing, feature engineering,
-heuristics, anomaly scoring, output generation, tests, runtime behaviour, and
+The ML engineer pair owns the detection engine: the autodetecting loader,
+schema-driven feature engineering, rules and heuristics, the Extended Isolation
+Forest scoring, the pipeline, output generation, tests, runtime behaviour, and
 supportability. This pair asks questions such as:
 
-- Does the feature mean what the report says it means?
+- Does the feature mean what the analysis says it means?
 - Does the model choice match the evidence available?
 - Are unlabelled probability claims carefully framed?
 - Can the run be reproduced from source?
 - Are tests and logs sufficient for a future maintainer?
 
-The UX, report, and documentation domain covers the local dashboard, generated
-reports, README content, diagrams, examples, accessibility, and business-facing
-explanation. This pair asks questions such as:
+The data scientist pair owns the analysis narrative and methodology: the
+analysis notebook, feature and label-injection design, interpretation honesty on
+unlabelled data, visualisation, README content, diagrams, examples, and
+accessibility. The two data scientists critique each other's work, asking
+questions such as:
 
 - Can a technical reader understand the result without being a data scientist?
 - Are assumptions and limitations visible near the claims they affect?
+- Does the analysis avoid overclaiming on unlabelled data?
 - Do tables, charts, and examples clarify rather than decorate?
 - Does the documentation match the current commands and scripts?
-- Is the dashboard useful for repeated review rather than just a demo?
 
 Cross-domain changes should go through both pairs. For example, a change to the
-bot threshold affects classifier behaviour and also how the result must be
+bot threshold affects detection behaviour and also how the result must be
 explained to the reader.
 
 ## HCOM Runtime Pattern
 
-Run the team from the repository root.
-
-```bash
-./scripts/check-agent-team
-./scripts/start-agent-team
-./scripts/start-orchestrator
-```
-
-The expected active tags are:
+Each role runs as an HCOM agent and loads its prompt from
+`development approach/prompts/`. The expected active tags are:
 
 ```text
-orchestrator-<name>
-algorithm-coder-<name>
-algorithm-reviewer-<name>
-ux-coder-<name>
-ux-reviewer-<name>
+product-manager-<name>
+ml-engineer-<name>
+ml-engineer-reviewer-<name>
+data-scientist-<name>
+data-scientist-reviewer-<name>
 ```
 
 Messages are routed by tag prefix:
 
 ```bash
-hcom send @algorithm-coder- "TASK bots-without-labels-001 ..."
-hcom send @ux-reviewer- "Please review ..."
+hcom send @ml-engineer- "TASK bots-without-labels-001 ..."
+hcom send @data-scientist-reviewer- "Please review ..."
 ```
 
-Use the helper scripts for normal launches because they load the role prompts
-from `development approach/prompts/` and set the working directory correctly.
+When launching agents, point each one at the matching prompt file in
+`development approach/prompts/` and set the working directory to the repository
+root.
 
 ## MCP Memory
 
-The team uses `@modelcontextprotocol/server-memory` as local working memory.
-Claude Code reads `.mcp.json`. Codex CLI uses its own registry, configured by:
-
-```bash
-./scripts/setup-memory-mcp
-```
-
+Each agent CLI can be pointed at a local MCP memory server for working context.
 Memory is useful for continuity across local agent sessions. It is not the
 source of truth. Any decision that another contributor should rely on must be
 committed in the repository.
@@ -134,27 +125,27 @@ committed in the repository.
 ## Workflow
 
 1. The human owner states the goal.
-2. The orchestrator writes a compact task brief.
-3. The orchestrator routes the task to the relevant coder and reviewer tags.
-4. The coder inspects the repo, makes focused changes, and runs verification.
-5. The coder sends a structured review request.
+2. The product manager writes a compact task brief.
+3. The product manager routes the task to the relevant implementer and reviewer tags.
+4. The implementer inspects the repo, makes focused changes, and runs verification.
+5. The implementer sends a structured review request.
 6. The reviewer inspects the diff and evidence directly.
 7. The reviewer approves or requests changes.
-8. The coder revises until blocking findings are resolved.
-9. The orchestrator checks status, stages only intentional changes, commits,
+8. The implementer revises until blocking findings are resolved.
+9. The product manager checks status, stages only intentional changes, commits,
    and pushes.
-10. The orchestrator announces the closeout with the commit SHA.
+10. The product manager announces the closeout with the commit SHA.
 
 The work should stay lightweight for low-risk changes. Full review gates are
-most valuable when work affects predictions, generated artefacts, probability
-claims, reports, dashboard behaviour, or the team process itself.
+most valuable when work affects predictions, generated outputs, probability
+claims, the analysis notebook, or the team process itself.
 
 ## Handoff Messages
 
 Task brief:
 
 ```text
-@<coder-tag>- @<reviewer-tag>- TASK bots-without-labels-<id>
+@<implementer-tag>- @<reviewer-tag>- TASK bots-without-labels-<id>
 Goal: <one sentence>
 Scope: <files or feature area>
 Acceptance: <observable success criteria>
@@ -162,7 +153,7 @@ Constraints: <dependencies, runtime, style, data assumptions>
 Review mode: blocking findings first, then residual risks
 ```
 
-Coder handoff:
+Implementer handoff:
 
 ```text
 @<reviewer-tag>- REVIEW_REQUEST bots-without-labels-<id>
@@ -176,7 +167,7 @@ Diff base: <branch or commit>
 Reviewer response:
 
 ```text
-@<coder-tag>- REVIEW_RESULT bots-without-labels-<id>
+@<implementer-tag>- REVIEW_RESULT bots-without-labels-<id>
 Decision: changes_requested | approved
 Findings:
 - Severity: <blocker|major|minor>
@@ -197,35 +188,36 @@ Reason: <short rationale>
 
 ## Review Gates
 
-The reviewer should inspect the actual repository diff, not only the coder's
-summary. A good review leads with blocking issues and then states residual risk.
+The reviewer should inspect the actual repository diff, not only the
+implementer's summary. A good review leads with blocking issues and then states
+residual risk.
 
-Algorithm review should cover:
+ML engineer review should cover:
 
-- parser and feature correctness
+- loader and feature correctness
 - data assumptions and edge cases
 - anomaly model fit and threshold reasoning
-- reproducibility of `predictions.tsv` and reports
+- reproducibility of `predictions.tsv` and generated outputs
 - test coverage and runtime supportability
-- unsupported fraud or probability claims
+- unsupported bot or probability claims
 
-UX review should cover:
+Data scientist review should cover:
 
 - clarity for a wide technical audience
 - British English, plain definitions, and concrete examples
+- interpretation honesty on unlabelled data
 - use of tables, diagrams, charts, or visual aids where helpful
 - accessibility and readable hierarchy
 - consistency between documentation, scripts, and generated output
-- avoidance of unnecessary implementation detail in user-facing copy
 
 ## Failure Modes And Controls
 
 | Risk | Control |
 |---|---|
-| Agents edit the same file concurrently | Orchestrator sequences work and checks git status |
+| Agents edit the same file concurrently | Product manager sequences work and checks git status |
 | Reviewer rubber-stamps work | Require diff-based findings and residual-risk notes |
-| Orchestrator becomes an implementer | Restate boundary: orchestrator coordinates only |
-| Artefacts drift from code | Re-run the pipeline when outputs are affected |
+| Product manager becomes an implementer | Restate boundary: product manager coordinates only |
+| Outputs drift from code | Re-run the pipeline when outputs are affected |
 | Agent agreement creates false confidence | Require evidence and human judgement |
 | Hidden memory becomes undocumented policy | Commit durable decisions to the repo |
 | Process becomes too heavy | Use the full loop only when risk justifies it |

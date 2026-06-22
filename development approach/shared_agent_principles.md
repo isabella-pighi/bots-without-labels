@@ -19,11 +19,11 @@ Escalate to the human owner when:
 
 - a new dependency, credential, paid service, or external provider is needed
 - a change affects bot counts, model thresholds, probability language, or
-  recommended business actions
+  recommended actions
 - validation cannot be run
 - coder and reviewer disagree on a blocking issue
 - unrelated dirty files could be mixed into the task
-- the task has grown beyond the original brief
+- the task has grown beyond its agreed scope
 
 ## 2. Evidence Over Assertion
 
@@ -36,8 +36,7 @@ Good evidence includes:
 - exact commands run
 - relevant command output or summary
 - changed files and generated artefacts
-- browser observations for UI work
-- refreshed report/dashboard/PDF output when source changes require it
+- refreshed analysis notebook output when source changes require it
 - known residual risks
 
 Missing validation is not evidence of correctness. If a check cannot be run,
@@ -45,21 +44,21 @@ state why and treat that as a risk.
 
 ## 3. Keep Roles Separate
 
-The orchestrator coordinates. It does not implement, review its own work, or
-resolve reviewer findings directly.
+The product manager routes and prioritises. It does not implement, review its
+own work, or resolve reviewer findings directly.
 
-Coders implement focused changes and provide review-ready handoffs.
+Implementers make focused changes and provide review-ready handoffs.
 
 Reviewers inspect the actual repository diff and generated artefacts. They do
-not approve work solely from the coder's summary.
+not approve work solely from the implementer's summary.
 
 The normal flow is:
 
-1. The orchestrator turns the user request into a clear task brief.
-2. The coder implements the smallest coherent change.
+1. The product manager turns the user request into a clear task brief.
+2. The implementer makes the smallest coherent change.
 3. The reviewer inspects the diff, artefacts, and evidence.
-4. The coder revises when needed.
-5. The orchestrator commits only after review approval or explicit human
+4. The implementer revises when needed.
+5. The product manager commits only after review approval or explicit human
    waiver.
 
 ## 4. Definition Of Ready
@@ -70,8 +69,8 @@ Before work starts, the task should state:
 - affected files, artefacts, or product area
 - expected user-visible outcome
 - acceptance criteria
-- required validation commands or browser/report checks
-- responsible coder/reviewer pair
+- required validation commands or notebook checks
+- responsible implementer/reviewer pair
 - known assumptions and out-of-scope areas
 
 If those details are missing, the agent should ask for clarification rather
@@ -101,7 +100,6 @@ Before acting, prefer current repository state:
 - recent commits
 - relevant source files
 - generated artefacts
-- `TODO.md`
 - `development approach/`
 - current HCOM messages
 
@@ -152,17 +150,17 @@ Required principles:
 - operational confidence is not measured precision
 - precision, recall, calibration, and threshold optimisation require trusted
   labels
-- `ct`, `kp`, `sld`, and similar fields must be described according to how the
-  code actually uses them
+- log fields and features must be described according to how the code actually
+  uses them
 - model or threshold changes must refresh affected artefacts and explain the
-  change in business terms
+  change in plain terms
 
 Unsupported probability or fraud claims are blocking issues.
 
-## 10. UX And Documentation Quality
+## 10. Analysis And Documentation Quality
 
-Documentation and reports must be readable by a wide technical audience,
-including readers who are not fluent in data science.
+Documentation and the analysis notebook must be readable by a wide technical
+audience, including readers who are not fluent in data science.
 
 Use:
 
@@ -180,28 +178,23 @@ Avoid:
 - restructuring documents without preserving the existing repo shape
 - visuals that add decoration but not understanding
 
-For the analysis report, use `docs/report_template.md` and keep the appendices
-for metrics, features, and model definitions.
+For the analysis notebook, keep clear sections for methodology, findings,
+interpretation, and the definitions of metrics, features, and the model.
 
-## 11. Frontend And Report Validation
+## 11. Analysis Notebook Validation
 
-Interactive UI work requires real browser validation against the live local
-webservice. Static string checks are not enough.
+Analysis-narrative work requires running the notebook against current outputs.
+Static string checks are not enough.
 
-For dashboard work, verify at minimum:
+For analysis notebook work, verify at minimum:
 
-- page loads without browser `pageerror`
-- no relevant console errors
-- navigation tabs work
-- Help modal opens and closes
-- filters update visible rows
-- CSV export downloads
-- report and feature links work
-- mobile viewport remains usable
+- the notebook executes top to bottom without errors
+- cells reflect current outputs rather than stale values
+- visualisations render and are readable
+- interpretation stays honest on unlabelled data
+- examples remain accurate against the current data
 
-For report work, verify the rendered output, not only the Markdown source.
-When PDF output is part of the task, confirm the generated PDF reflects the
-same style and content as the HTML report.
+Verify the rendered notebook output, not only the source cells.
 
 ## 12. Dependency Discipline
 
@@ -214,7 +207,7 @@ features must stay optional unless the human owner explicitly approves them.
 ## 13. Task Slicing
 
 Prefer small, reviewable changes with one coherent purpose. Avoid mixing
-algorithm changes, dashboard changes, report rewrites, generated artefacts, and
+detection-engine changes, analysis-notebook changes, generated artefacts, and
 team-process edits in one task unless the human owner asks for a full-stack
 update.
 
@@ -227,10 +220,9 @@ Reject these behaviours:
 
 - vague task briefs without acceptance criteria
 - reviewers approving only from summaries
-- UI approval without seeing the actual UI
-- stale generated reports or PDFs after source changes
+- analysis approval without running the notebook
+- stale generated outputs after source changes
 - unlabelled anomaly scores described as proven fraud
-- "why it mattered" entries that only list implementation or test counts
 - task closeouts that hide assumptions, caveats, or failed validation
 - committing unrelated dirty files
 
