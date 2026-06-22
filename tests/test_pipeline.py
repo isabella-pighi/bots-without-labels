@@ -24,7 +24,8 @@ def test_decision_contract_holds(tmp_path: Path) -> None:
     loaded = load(tmp_path / "syn.tsv")
     result = detect(loaded.frame, loaded.schema)
     expected = (
-        (result.heuristic >= HEURISTIC_CUTOFF) | (result.ml_scores > result.ml_threshold)
+        (result.heuristic >= HEURISTIC_CUTOFF)
+        | (result.ml_scores > result.ml_threshold)
     ).astype(int)
     assert np.array_equal(result.is_bot, expected)
     assert result.combined.max() <= 1.0 and result.combined.min() >= 0.0
@@ -38,7 +39,12 @@ def test_run_pipeline_writes_artifacts(tmp_path: Path) -> None:
     assert summary["total_events"] == 560
     assert summary["bot_events"] > 0
     assert summary["id_column"] == "event_id"
-    for artefact in ("summary.json", "features.tsv", "selected_events.json", "ml_score_threshold.png"):
+    for artefact in (
+        "summary.json",
+        "features.tsv",
+        "selected_events.json",
+        "ml_score_threshold.png",
+    ):
         assert (out / "artifacts" / artefact).exists()
 
     predictions = (out / "predictions.tsv").read_text(encoding="utf-8").splitlines()

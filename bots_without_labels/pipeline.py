@@ -167,12 +167,12 @@ def run_pipeline(
         "ml_threshold": result.ml_threshold,
         "ml_threshold_method": result.ml_threshold_method,
         "ml_backend": result.ml_backend,
-        "heuristic_flag_rate": float((result.heuristic >= HEURISTIC_CUTOFF).mean())
-        if n_rows
-        else 0.0,
-        "ml_flag_rate": float((result.ml_scores > result.ml_threshold).mean())
-        if n_rows
-        else 0.0,
+        "heuristic_flag_rate": (
+            float((result.heuristic >= HEURISTIC_CUTOFF).mean()) if n_rows else 0.0
+        ),
+        "ml_flag_rate": (
+            float((result.ml_scores > result.ml_threshold).mean()) if n_rows else 0.0
+        ),
         "evidence_tier_counts": {
             "tier_1_both": int((result.evidence_tier == 1).sum()),
             "tier_2_heuristic_only": int((result.evidence_tier == 2).sum()),

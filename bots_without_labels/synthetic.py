@@ -25,12 +25,47 @@ ARCHETYPES = ("burst", "repeated_query", "mechanical_timing", "nonsense_query")
 _REGIONS = ("us", "gb", "de", "fr", "jp", "br", "in", "ca", "au", "it")
 _BROWSERS = ("chrome", "safari", "firefox", "edge")
 _OS = ("ios", "android", "windows", "macos", "linux")
-_DOMAINS = ("news.example", "shop.example", "videos.example", "blog.example", "maps.example")
+_DOMAINS = (
+    "news.example",
+    "shop.example",
+    "videos.example",
+    "blog.example",
+    "maps.example",
+)
 _WORDS = (
-    "best", "cheap", "fast", "local", "weather", "recipes", "flights", "shoes",
-    "laptop", "insurance", "near", "me", "today", "review", "price", "guide",
-    "how", "to", "buy", "online", "store", "deals", "phone", "car", "house",
-    "movie", "music", "news", "sport", "travel", "hotel", "food", "coffee",
+    "best",
+    "cheap",
+    "fast",
+    "local",
+    "weather",
+    "recipes",
+    "flights",
+    "shoes",
+    "laptop",
+    "insurance",
+    "near",
+    "me",
+    "today",
+    "review",
+    "price",
+    "guide",
+    "how",
+    "to",
+    "buy",
+    "online",
+    "store",
+    "deals",
+    "phone",
+    "car",
+    "house",
+    "movie",
+    "music",
+    "news",
+    "sport",
+    "travel",
+    "hotel",
+    "food",
+    "coffee",
 )
 _EPOCH = datetime(2021, 6, 1, 0, 0, 0)
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -52,9 +87,7 @@ class SyntheticLog:
     archetype: list[str | None]
 
 
-def generate(
-    n_legit: int = 900, n_bots: int = 100, *, seed: int = 0
-) -> SyntheticLog:
+def generate(n_legit: int = 900, n_bots: int = 100, *, seed: int = 0) -> SyntheticLog:
     """Generate a synthetic click log with planted bot archetypes.
 
     Args:
@@ -88,7 +121,10 @@ def generate(
     rng.shuffle(order)
     shuffled_rows = [rows[i] for i in order]
     shuffled_arch = [archetypes[i] for i in order]
-    frame = pd.DataFrame(shuffled_rows, columns=["event_id", "event_time", "region", "browser", "os", "url"])
+    frame = pd.DataFrame(
+        shuffled_rows,
+        columns=["event_id", "event_time", "region", "browser", "os", "url"],
+    )
     is_bot = np.array([0 if arch is None else 1 for arch in shuffled_arch], dtype=int)
     return SyntheticLog(frame=frame, is_bot=is_bot, archetype=shuffled_arch)
 
@@ -132,11 +168,17 @@ def _legit_row(rng: random.Random, counter: _Counter) -> dict[str, str]:
     }
 
 
-def _burst_bots(rng: random.Random, counter: _Counter, count: int) -> list[dict[str, str]]:
+def _burst_bots(
+    rng: random.Random, counter: _Counter, count: int
+) -> list[dict[str, str]]:
     """Many clicks in the same second, same context, fast and identical."""
 
     rows = []
-    region, browser, os_name = rng.choice(_REGIONS), rng.choice(_BROWSERS), rng.choice(_OS)
+    region, browser, os_name = (
+        rng.choice(_REGIONS),
+        rng.choice(_BROWSERS),
+        rng.choice(_OS),
+    )
     domain, query = "botnet.example", "buy now"
     second = rng.randint(0, 86_400)
     for _ in range(count):
@@ -153,7 +195,9 @@ def _burst_bots(rng: random.Random, counter: _Counter, count: int) -> list[dict[
     return rows
 
 
-def _repeated_query_bots(rng: random.Random, counter: _Counter, count: int) -> list[dict[str, str]]:
+def _repeated_query_bots(
+    rng: random.Random, counter: _Counter, count: int
+) -> list[dict[str, str]]:
     """The same query/domain hammered across the day with a reused time-to-click."""
 
     rows = []
@@ -172,11 +216,17 @@ def _repeated_query_bots(rng: random.Random, counter: _Counter, count: int) -> l
     return rows
 
 
-def _mechanical_timing_bots(rng: random.Random, counter: _Counter, count: int) -> list[dict[str, str]]:
+def _mechanical_timing_bots(
+    rng: random.Random, counter: _Counter, count: int
+) -> list[dict[str, str]]:
     """Regular inter-arrival timing within one context, reused fast click."""
 
     rows = []
-    region, browser, os_name = rng.choice(_REGIONS), rng.choice(_BROWSERS), rng.choice(_OS)
+    region, browser, os_name = (
+        rng.choice(_REGIONS),
+        rng.choice(_BROWSERS),
+        rng.choice(_OS),
+    )
     domain, query = "scriptfarm.example", "auto refresh page"
     start = rng.randint(0, 80_000)
     for step in range(count):
@@ -193,7 +243,9 @@ def _mechanical_timing_bots(rng: random.Random, counter: _Counter, count: int) -
     return rows
 
 
-def _nonsense_query_bots(rng: random.Random, counter: _Counter, count: int) -> list[dict[str, str]]:
+def _nonsense_query_bots(
+    rng: random.Random, counter: _Counter, count: int
+) -> list[dict[str, str]]:
     """A scripted low-entropy gibberish seed reused with a fixed click delay."""
 
     rows = []

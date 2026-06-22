@@ -44,7 +44,17 @@ def test_doctor_command_prints_json(capsys, tmp_path: Path) -> None:
 def test_generate_command_writes_log(capsys, tmp_path: Path) -> None:
     output = tmp_path / "sample.tsv"
     exit_code = cli.main(
-        ["generate", "--output", str(output), "--legit", "100", "--bots", "20", "--seed", "0"]
+        [
+            "generate",
+            "--output",
+            str(output),
+            "--legit",
+            "100",
+            "--bots",
+            "20",
+            "--seed",
+            "0",
+        ]
     )
     captured = capsys.readouterr()
     payload = json.loads(captured.out)

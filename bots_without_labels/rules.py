@@ -108,9 +108,18 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     conc_cols = _eligible(context.categorical_columns, context)
     numeric_cols = _eligible(context.numeric_columns, context)
 
-    text_thr = {c: _adaptive(context.count_values[c], TEXT_REPEAT_FLOOR, n_rows) for c in text_cols}
-    conc_thr = {c: _adaptive(context.count_values[c], CONCENTRATION_FLOOR, n_rows) for c in conc_cols}
-    num_thr = {c: _adaptive(context.count_values[c], NUMERIC_REUSE_FLOOR, n_rows) for c in numeric_cols}
+    text_thr = {
+        c: _adaptive(context.count_values[c], TEXT_REPEAT_FLOOR, n_rows)
+        for c in text_cols
+    }
+    conc_thr = {
+        c: _adaptive(context.count_values[c], CONCENTRATION_FLOOR, n_rows)
+        for c in conc_cols
+    }
+    num_thr = {
+        c: _adaptive(context.count_values[c], NUMERIC_REUSE_FLOOR, n_rows)
+        for c in numeric_cols
+    }
     thresholds.update(
         {
             "text_repeat": text_thr,
@@ -128,7 +137,9 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     thresholds["context_cluster"] = context_thr
 
     entropy = _entropy_lookup(feature_set)
-    lengths = {c: frame[c].astype("string").fillna("").str.len().to_numpy() for c in text_cols}
+    lengths = {
+        c: frame[c].astype("string").fillna("").str.len().to_numpy() for c in text_cols
+    }
 
     hits: list[list[RuleHit]] = []
     scores = np.zeros(n_rows, dtype=float)
@@ -138,39 +149,118 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
         for col in text_cols:
             count = int(context.row_counts[col][row])
             if count > 1 and count >= text_thr[col]:
-                row_hits.append(_hit("repeat_value", f"repeated {col} value", f"{col} repeated {count} times", W_TEXT_REPEAT, STRONG, "repetition"))
+                row_hits.append(
+                    _hit(
+                        "repeat_value",
+                        f"repeated {col} value",
+                        f"{col} repeated {count} times",
+                        W_TEXT_REPEAT,
+                        STRONG,
+                        "repetition",
+                    )
+                )
             ent = entropy.get(col)
-            if ent is not None and 0.0 < ent[row] <= LOW_ENTROPY_MAX and lengths[col][row] >= LOW_ENTROPY_MIN_LENGTH:
-                row_hits.append(_hit("low_entropy", f"low-entropy {col}", f"low-entropy {col} string", W_LOW_ENTROPY, SUPPORTING, "text"))
+            if (
+                ent is not None
+                and 0.0 < ent[row] <= LOW_ENTROPY_MAX
+                and lengths[col][row] >= LOW_ENTROPY_MIN_LENGTH
+            ):
+                row_hits.append(
+                    _hit(
+                        "low_entropy",
+                        f"low-entropy {col}",
+                        f"low-entropy {col} string",
+                        W_LOW_ENTROPY,
+                        SUPPORTING,
+                        "text",
+                    )
+                )
 
         for col in conc_cols:
             count = int(context.row_counts[col][row])
             if count >= conc_thr[col]:
-                row_hits.append(_hit("concentration", f"high-volume {col} value", f"high-volume {col} value ({count})", W_CATEGORICAL_CONCENTRATION, SUPPORTING, "concentration"))
+                row_hits.append(
+                    _hit(
+                        "concentration",
+                        f"high-volume {col} value",
+                        f"high-volume {col} value ({count})",
+                        W_CATEGORICAL_CONCENTRATION,
+                        SUPPORTING,
+                        "concentration",
+                    )
+                )
 
         for col in numeric_cols:
             count = int(context.row_counts[col][row])
             if count > 1 and count >= num_thr[col]:
-                row_hits.append(_hit("numeric_reuse", f"reused {col} value", f"exact {col} value reused {count} times", W_NUMERIC_REUSE, STRONG, "repetition"))
+                row_hits.append(
+                    _hit(
+                        "numeric_reuse",
+                        f"reused {col} value",
+                        f"exact {col} value reused {count} times",
+                        W_NUMERIC_REUSE,
+                        STRONG,
+                        "repetition",
+                    )
+                )
 
         if context.context_count is not None:
             count = int(context.context_count[row])
             if count >= context_thr:
-                row_hits.append(_hit("context_cluster", "heavy context cluster", f"heavy context cluster ({count})", W_CONTEXT_CLUSTER, SUPPORTING, "concentration"))
+                row_hits.append(
+                    _hit(
+                        "context_cluster",
+                        "heavy context cluster",
+                        f"heavy context cluster ({count})",
+                        W_CONTEXT_CLUSTER,
+                        SUPPORTING,
+                        "concentration",
+                    )
+                )
 
         if context.timestamp_count is not None:
             count = int(context.timestamp_count[row])
             if count >= same_instant_thr:
-                row_hits.append(_hit("same_instant_burst", "same-instant burst", f"{count} events in the same instant", W_SAME_INSTANT_BURST, STRONG, "timing"))
+                row_hits.append(
+                    _hit(
+                        "same_instant_burst",
+                        "same-instant burst",
+                        f"{count} events in the same instant",
+                        W_SAME_INSTANT_BURST,
+                        STRONG,
+                        "timing",
+                    )
+                )
 
         if context.burst_count is not None:
             burst = int(context.burst_count[row])
             if burst >= LOCAL_BURST_FLOOR:
-                row_hits.append(_hit("local_burst", "dense burst", f"dense local burst ({burst} events)", W_LOCAL_BURST, STRONG, "timing"))
+                row_hits.append(
+                    _hit(
+                        "local_burst",
+                        "dense burst",
+                        f"dense local burst ({burst} events)",
+                        W_LOCAL_BURST,
+                        STRONG,
+                        "timing",
+                    )
+                )
 
         if context.dt_cv is not None and context.group_size is not None:
-            if context.group_size[row] >= REGULAR_TIMING_MIN_EVENTS and context.dt_cv[row] <= REGULAR_TIMING_MAX_CV:
-                row_hits.append(_hit("regular_timing", "regular inter-arrival timing", f"regular inter-arrival timing (cv {context.dt_cv[row]:.3f})", W_REGULAR_TIMING, STRONG, "timing"))
+            if (
+                context.group_size[row] >= REGULAR_TIMING_MIN_EVENTS
+                and context.dt_cv[row] <= REGULAR_TIMING_MAX_CV
+            ):
+                row_hits.append(
+                    _hit(
+                        "regular_timing",
+                        "regular inter-arrival timing",
+                        f"regular inter-arrival timing (cv {context.dt_cv[row]:.3f})",
+                        W_REGULAR_TIMING,
+                        STRONG,
+                        "timing",
+                    )
+                )
 
         scores[row] = _cap_and_sum(row_hits)
         hits.append(row_hits)
@@ -178,7 +268,9 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     return RulesResult(scores=scores, hits=hits, thresholds=thresholds)
 
 
-def _eligible(columns: list[str], context, *, any_cardinality: bool = False) -> list[str]:
+def _eligible(
+    columns: list[str], context, *, any_cardinality: bool = False
+) -> list[str]:
     """Filter columns that have enough distinct values for a count rule.
 
     Concentration and reuse only make sense when a value being frequent is
@@ -227,7 +319,9 @@ def _entropy_lookup(feature_set: FeatureSet) -> dict[str, np.ndarray]:
     return lookup
 
 
-def _hit(rule_id: str, label: str, reason: str, weight: float, strength: str, family: str) -> RuleHit:
+def _hit(
+    rule_id: str, label: str, reason: str, weight: float, strength: str, family: str
+) -> RuleHit:
     return RuleHit(
         rule_id=rule_id,
         label=label,

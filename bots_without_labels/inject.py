@@ -73,7 +73,18 @@ def inject_bots(
         for step in range(count):
             uid += 1
             new_rows.append(
-                _bot_row(schema, samples, cluster, archetype, base_time, step, tmin, tmax, uid, rng)
+                _bot_row(
+                    schema,
+                    samples,
+                    cluster,
+                    archetype,
+                    base_time,
+                    step,
+                    tmin,
+                    tmax,
+                    uid,
+                    rng,
+                )
             )
             row_archetypes.append(archetype)
 
@@ -89,7 +100,9 @@ def inject_bots(
     augmented = pd.concat([frame, injected], ignore_index=True)
     is_injected = np.array([0] * frame.shape[0] + [1] * len(new_rows), dtype=int)
     archetype_col = [None] * frame.shape[0] + row_archetypes
-    return InjectionResult(frame=augmented, is_injected=is_injected, archetype=archetype_col)
+    return InjectionResult(
+        frame=augmented, is_injected=is_injected, archetype=archetype_col
+    )
 
 
 def _time_bounds(frame: pd.DataFrame, schema: Schema) -> tuple[float, float]:
@@ -103,7 +116,9 @@ def _time_bounds(frame: pd.DataFrame, schema: Schema) -> tuple[float, float]:
     return float(nanos.min()) / 1e9, float(nanos.max()) / 1e9
 
 
-def _column_samples(frame: pd.DataFrame, schema: Schema, rng: random.Random) -> dict[str, list]:
+def _column_samples(
+    frame: pd.DataFrame, schema: Schema, rng: random.Random
+) -> dict[str, list]:
     samples: dict[str, list] = {}
     for column in frame.columns:
         values = frame[column].dropna().tolist()
@@ -111,7 +126,9 @@ def _column_samples(frame: pd.DataFrame, schema: Schema, rng: random.Random) -> 
     return samples
 
 
-def _cluster_values(schema: Schema, samples: dict[str, list], archetype: str, rng: random.Random) -> dict[str, object]:
+def _cluster_values(
+    schema: Schema, samples: dict[str, list], archetype: str, rng: random.Random
+) -> dict[str, object]:
     """Fix the shared values that give an archetype cluster its signature."""
 
     cluster: dict[str, object] = {}
@@ -167,7 +184,14 @@ def _bot_row(
     return row
 
 
-def _bot_time(archetype: str, base_time: float, step: int, tmin: float, tmax: float, rng: random.Random) -> object:
+def _bot_time(
+    archetype: str,
+    base_time: float,
+    step: int,
+    tmin: float,
+    tmax: float,
+    rng: random.Random,
+) -> object:
     if archetype == "burst":
         seconds = base_time
     elif archetype == "mechanical_timing":

@@ -55,7 +55,12 @@ def test_url_expansion_creates_typed_param_columns(tmp_path: Path) -> None:
     assert frame["url__ttc"].tolist() == [10, 10, 3000, 2500]
 
     # URL-encoded query values are decoded on the way in.
-    assert frame["url__q"].tolist() == ["foo bar", "foo bar", "human search", "real person"]
+    assert frame["url__q"].tolist() == [
+        "foo bar",
+        "foo bar",
+        "human search",
+        "real person",
+    ]
 
 
 def test_typed_frame_dtypes(tmp_path: Path) -> None:

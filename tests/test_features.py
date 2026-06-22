@@ -109,7 +109,9 @@ def test_build_is_deterministic(tmp_path: Path) -> None:
 
 def test_minimal_log_without_timestamp_or_categoricals(tmp_path: Path) -> None:
     path = tmp_path / "amounts.csv"
-    path.write_text("amount\n" + "\n".join(str(i % 7) for i in range(40)) + "\n", "utf-8")
+    path.write_text(
+        "amount\n" + "\n".join(str(i % 7) for i in range(40)) + "\n", "utf-8"
+    )
     log = load(path)
     fs = build_features(log.frame, log.schema)
 

@@ -24,9 +24,9 @@ def _input_file_error(path: Path) -> str | None:
     """
 
     if not path.exists():
-        return f"Input TSV '{path}' does not exist."
+        return f"Input file '{path}' does not exist."
     if not path.is_file():
-        return f"Input TSV '{path}' is not a file."
+        return f"Input file '{path}' is not a file."
     return None
 
 
@@ -56,7 +56,7 @@ def run_doctor(
     """Check local runtime prerequisites without running the pipeline.
 
     Args:
-        input_path: Optional raw click TSV path to verify.
+        input_path: Optional input log path to verify.
         output_dir: Directory to test for artifact writability.
 
     Returns:
@@ -96,10 +96,12 @@ def run_doctor(
     add_check(
         "optional:isotree",
         True,
-        "Extended Isolation Forest backend available"
-        if eif_available
-        else "isotree not installed; using the built-in fallback "
-        "(install with: uv sync --extra eif)",
+        (
+            "Extended Isolation Forest backend available"
+            if eif_available
+            else "isotree not installed; using the built-in fallback "
+            "(install with: uv sync --extra eif)"
+        ),
     )
 
     add_check(
@@ -157,9 +159,13 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument(
         "--output", required=True, help="Path to write the generated TSV log"
     )
-    generate_parser.add_argument("--legit", type=int, default=900, help="Legitimate events")
+    generate_parser.add_argument(
+        "--legit", type=int, default=900, help="Legitimate events"
+    )
     generate_parser.add_argument("--bots", type=int, default=100, help="Bot events")
-    generate_parser.add_argument("--seed", type=int, default=0, help="Deterministic seed")
+    generate_parser.add_argument(
+        "--seed", type=int, default=0, help="Deterministic seed"
+    )
 
     doctor_parser = subparsers.add_parser(
         "doctor",
