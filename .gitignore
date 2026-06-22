@@ -25,6 +25,7 @@ data/*.tsv
 data/*.csv
 data/*.json
 data/*.jsonl
+data/*.zip
 
 # Local notes
 *.local
