@@ -33,7 +33,7 @@ from .threshold import dynamic_knee_threshold
 
 CANONICAL_RUN_OUTPUT_DIR = Path("run-output")
 HEURISTIC_CUTOFF = 0.70
-MAX_ML_FLAG_RATE = 0.05
+MAX_ML_FLAG_RATE = 0.02
 DECISION_RULE = "is_bot = heuristic_score >= 0.70 OR ml_score > dynamic_ml_threshold"
 
 

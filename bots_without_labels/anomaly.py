@@ -2,9 +2,22 @@
 
 Scores a numeric feature matrix with an Extended Isolation Forest when the
 optional ``isotree`` backend is installed, and otherwise falls back to a
-dependency-free standardised-deviation score. Either way the output is a 0-1
-array where higher means more anomalous, so the rest of the pipeline does not
-care which backend ran.
+dependency-free marginal-deviation score.
+
+Two deliberate choices, following the isolation-forest literature (Liu, Ting &
+Zhou 2008/2012; Hariri, Carrasco Kind & Brunner 2019):
+
+* Features are standardised with **median / MAD** (robust z-scores), not
+  mean / standard deviation. Log-count and concentration features in real logs
+  are heavy-tailed, where a few automated mega-clusters inflate the standard
+  deviation and *mask* the anomalies; the median and MAD are not distorted by
+  that tail.
+* The Extended Isolation Forest's own ``decision_function`` is already a bounded
+  ``[0, 1]`` anomaly score with the standard sample-size normalisation, so it is
+  used **as-is** rather than re-min-maxed per batch (which would throw away that
+  calibration and make the score depend on the single most- and least-anomalous
+  rows in the batch). The dependency-free fallback has no natural scale, so it is
+  min-max mapped to ``[0, 1]`` and is, honestly, a weaker marginal detector.
 """
 
 from __future__ import annotations
@@ -14,6 +27,7 @@ import numpy as np
 EIF_TREES = 100
 EIF_EXTENSION_DIMS = 2
 EIF_SAMPLE_SIZE = 4096
+_MAD_TO_STD = 1.4826  # makes MAD a consistent estimator of the std for normal data
 
 
 def score_matrix(matrix: np.ndarray, *, seed: int = 7) -> tuple[np.ndarray, str]:
@@ -26,6 +40,8 @@ def score_matrix(matrix: np.ndarray, *, seed: int = 7) -> tuple[np.ndarray, str]
     Returns:
         A pair ``(scores, backend)`` where ``backend`` is ``"eif"``,
         ``"fallback"``, or ``"degenerate"`` (too few rows/features to score).
+        EIF scores are the model's native anomaly score; fallback scores are
+        batch-relative.
     """
 
     matrix = np.asarray(matrix, dtype=float)
@@ -35,18 +51,27 @@ def score_matrix(matrix: np.ndarray, *, seed: int = 7) -> tuple[np.ndarray, str]
     if matrix.shape[1] == 0 or n_rows < 3:
         return np.full(n_rows, 0.5), "degenerate"
 
-    scaled = _standardize(matrix)
+    scaled = _robust_standardize(matrix)
     raw = _extended_isolation_forest(scaled, seed=seed)
     if raw is not None:
-        return _minmax(raw), "eif"
+        return np.clip(raw, 0.0, 1.0), "eif"
     return _minmax(_deviation_score(scaled)), "fallback"
 
 
-def _standardize(matrix: np.ndarray) -> np.ndarray:
-    means = matrix.mean(axis=0)
-    stds = matrix.std(axis=0)
-    stds[stds == 0.0] = 1.0
-    scaled = (matrix - means) / stds
+def _robust_standardize(matrix: np.ndarray) -> np.ndarray:
+    """Standardise columns with median / MAD, robust to heavy tails.
+
+    Falls back to the standard deviation, then to 1.0, for columns whose MAD is
+    zero (constant or near-constant), so the result is always finite.
+    """
+
+    median = np.median(matrix, axis=0)
+    mad = np.median(np.abs(matrix - median), axis=0)
+    scale = _MAD_TO_STD * mad
+    std = matrix.std(axis=0)
+    scale = np.where(scale > 0.0, scale, std)
+    scale = np.where(scale > 0.0, scale, 1.0)
+    scaled = (matrix - median) / scale
     # Defensive: never pass NaN/inf to the forest (missing_action="fail").
     return np.nan_to_num(scaled, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -71,10 +96,12 @@ def _extended_isolation_forest(scaled: np.ndarray, *, seed: int) -> np.ndarray |
 
 
 def _deviation_score(scaled: np.ndarray) -> np.ndarray:
-    """Mean absolute standardised deviation across features.
+    """Mean absolute robust-z deviation across features.
 
-    A transparent stand-in for the isolation forest: rows whose features sit far
-    from the batch norm on average score higher.
+    A transparent but weaker stand-in for the isolation forest: it scores each
+    row by how far its features sit from the batch norm on average. Unlike the
+    forest it ignores feature interactions (e.g. same-context *and* same-instant),
+    so it is a marginal detector, not an equivalent.
     """
 
     return np.abs(scaled).mean(axis=1)

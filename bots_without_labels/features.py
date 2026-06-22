@@ -60,9 +60,10 @@ class FeatureContext:
         timestamp_count: Per-row count of rows sharing the exact timestamp.
         burst_count: Per-row local click count within the burst window and the
             row's categorical context.
-        dt_std: Per-row inter-arrival standard deviation within the context.
-        dt_cv: Per-row inter-arrival coefficient of variation within the context.
-        group_size: Per-row size of the row's categorical context group.
+        dt_std: Per-row inter-arrival standard deviation within the burst-run.
+        dt_cv: Per-row inter-arrival coefficient of variation within the burst-run.
+        run_size: Per-row size of the row's burst-run (the contiguous, densely
+            spaced sub-sequence of its categorical context, not the whole group).
         categorical_columns / numeric_columns / text_columns / boolean_columns:
             The columns used, by role.
         timestamp_column: The primary timestamp column, or ``None``.
@@ -76,7 +77,7 @@ class FeatureContext:
     burst_count: np.ndarray | None = None
     dt_std: np.ndarray | None = None
     dt_cv: np.ndarray | None = None
-    group_size: np.ndarray | None = None
+    run_size: np.ndarray | None = None
     categorical_columns: list[str] = field(default_factory=list)
     numeric_columns: list[str] = field(default_factory=list)
     text_columns: list[str] = field(default_factory=list)
@@ -167,13 +168,20 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         context.count_values[name] = distinct
         add(f"{name}__rep", np.log1p(counts), "repetition")
 
-    # Text entropy, character diversity, and repetition.
+    # Text entropy, character diversity, and repetition. Entropy/diversity depend
+    # only on the string value, so compute them once per distinct value and map
+    # back -- O(distinct) instead of O(rows), which matters on large logs.
     for name in texts:
         as_text = frame[name].astype("string").fillna("").astype(str)
-        add(f"{name}__entropy", as_text.map(_string_entropy).to_numpy(float), "text")
+        unique_values = as_text.unique()
+        entropy_by_value = {value: _string_entropy(value) for value in unique_values}
+        uniqchar_by_value = {
+            value: _unique_char_ratio(value) for value in unique_values
+        }
+        add(f"{name}__entropy", as_text.map(entropy_by_value).to_numpy(float), "text")
         add(
             f"{name}__uniqchar",
-            as_text.map(_unique_char_ratio).to_numpy(float),
+            as_text.map(uniqchar_by_value).to_numpy(float),
             "text",
         )
         counts, distinct = _value_counts(frame[name])
@@ -196,11 +204,11 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         add("same_time__conc", np.log1p(ts_counts), "burst")
 
         keys = _joint_keys(frame, categoricals) if categoricals else np.zeros(n_rows)
-        burst, dt_std, dt_cv, group_size = _temporal_context(times, keys)
+        burst, dt_std, dt_cv, run_size = _temporal_context(times, keys)
         context.burst_count = burst
         context.dt_std = dt_std
         context.dt_cv = dt_cv
-        context.group_size = group_size
+        context.run_size = run_size
         add(f"burst{BURST_WINDOW_SECONDS}s__conc", np.log1p(burst), "burst")
         add("dt__std", np.log1p(dt_std), "timing")
         add("dt__cv", np.log1p(dt_cv), "timing")
@@ -271,20 +279,32 @@ def _unique_char_ratio(value: str) -> float:
 def _temporal_context(
     times: pd.Series, keys: np.ndarray, window_seconds: int = BURST_WINDOW_SECONDS
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return per-row burst counts, inter-arrival regularity, and group sizes.
+    """Return per-row burst counts, inter-arrival regularity, and run sizes.
 
     Rows are grouped by their categorical context. Within each group, sorted by
     time, every row receives the number of peers inside a centred time window
-    (the burst count) and the group's inter-arrival standard deviation and
-    coefficient of variation. Sparse groups receive a high sentinel so they are
-    not treated as mechanically regular.
+    (the burst count).
+
+    Inter-arrival regularity is measured per **burst-run** -- a maximal
+    sub-sequence whose consecutive gaps stay within the burst window -- rather
+    than over the whole group. A bot that injects a mechanically regular cadence
+    into a *popular* context (one whose categorical value many legitimate rows
+    also share) would otherwise be masked: the legitimate rows, scattered across
+    hours or days, inflate the group's inter-arrival variance so the regular
+    sub-sequence never stands out. Segmenting into runs isolates the cadence.
+
+    A run whose events are all at the *same instant* (mean gap of zero) is left at
+    the sparse sentinel rather than scored as perfectly regular: a same-instant
+    pile is the ``same_instant_burst`` rule's job, and treating coarse or repeated
+    timestamps as "mechanically regular" would invent false positives. Runs and
+    groups too small to be considered regular keep the high sentinel.
     """
 
     n_rows = len(times)
     burst = np.ones(n_rows, dtype=float)
     dt_std = np.full(n_rows, SPARSE_TIMING_SENTINEL, dtype=float)
     dt_cv = np.full(n_rows, SPARSE_TIMING_SENTINEL, dtype=float)
-    group_size = np.ones(n_rows, dtype=float)
+    run_size = np.ones(n_rows, dtype=float)
 
     # Normalise to nanoseconds: pandas may parse timestamps at second/us/ns
     # resolution, so the raw int64 view is not a fixed unit.
@@ -298,8 +318,6 @@ def _temporal_context(
             groups[keys[index]].append(index)
 
     for members in groups.values():
-        for index in members:
-            group_size[index] = len(members)
         order = sorted(members, key=lambda index: nanos[index])
         seconds = [nanos[index] / 1e9 for index in order]
         left = 0
@@ -311,13 +329,29 @@ def _temporal_context(
             while right + 1 < len(order) and seconds[right + 1] <= moment + half_window:
                 right += 1
             burst[index] = right - left + 1
-        if len(order) >= 3:
-            deltas = [seconds[i] - seconds[i - 1] for i in range(1, len(order))]
-            mean_delta = sum(deltas) / len(deltas)
-            variance = sum((delta - mean_delta) ** 2 for delta in deltas) / len(deltas)
-            std = variance**0.5
-            cv = std / mean_delta if mean_delta > 0 else 0.0
-            for index in order:
-                dt_std[index] = std
-                dt_cv[index] = cv
-    return burst, dt_std, dt_cv, group_size
+
+        # Segment the group into burst-runs and score regularity within each.
+        start = 0
+        for position in range(1, len(order) + 1):
+            ends_run = position == len(order) or (
+                seconds[position] - seconds[position - 1] > window_seconds
+            )
+            if not ends_run:
+                continue
+            run = order[start:position]
+            run_seconds = seconds[start:position]
+            for index in run:
+                run_size[index] = len(run)
+            if len(run) >= 3:
+                deltas = [
+                    run_seconds[i] - run_seconds[i - 1] for i in range(1, len(run))
+                ]
+                mean_delta = sum(deltas) / len(deltas)
+                if mean_delta > 0:
+                    variance = sum((d - mean_delta) ** 2 for d in deltas) / len(deltas)
+                    std = variance**0.5
+                    for index in run:
+                        dt_std[index] = std
+                        dt_cv[index] = std / mean_delta
+            start = position
+    return burst, dt_std, dt_cv, run_size

@@ -129,30 +129,38 @@ def _column_samples(
 def _cluster_values(
     schema: Schema, samples: dict[str, list], archetype: str, rng: random.Random
 ) -> dict[str, object]:
-    """Fix the shared values that give an archetype cluster its signature."""
+    """Fix the shared values that give an archetype its signature.
 
+    The timing archetypes (``burst``, ``mechanical_timing``) share a narrow
+    context -- the same categorical values, numeric value, and text -- so the
+    detector sees a clustered automation pattern. ``diffuse_replay`` shares only
+    the text/value (repetition) while everything else stays diverse, mimicking a
+    popular query. ``stealth`` shares nothing, so its rows are drawn at random
+    from the data and leave no signature.
+    """
+
+    narrow = archetype in ("burst", "mechanical_timing")
     cluster: dict[str, object] = {}
     for column in samples:
         role = schema.role_of(column)
         pool = samples[column]
-        if role == Role.NUMERIC:
+        if role in (Role.TEXT, Role.URL):
+            if archetype != "stealth":
+                cluster[column] = _signature_text(archetype, rng)
+        elif narrow and role == Role.NUMERIC:
             cluster[column] = float(rng.choice(pool)) if pool else 5.0
-        elif role == Role.CATEGORICAL:
+        elif narrow and role == Role.CATEGORICAL:
             cluster[column] = rng.choice(pool) if pool else "bot"
-        elif role == Role.BOOLEAN:
+        elif narrow and role == Role.BOOLEAN:
             cluster[column] = rng.choice(pool) if pool else True
-        elif role in (Role.TEXT, Role.URL):
-            cluster[column] = _signature_text(archetype, rng)
     return cluster
 
 
 def _signature_text(archetype: str, rng: random.Random) -> str:
-    if archetype == "nonsense_query":
-        return rng.choice("abcdefghijk") * 8
     return {
         "burst": "buy now now now",
-        "repeated_query": "free gift card winner",
         "mechanical_timing": "auto refresh page",
+        "diffuse_replay": "free gift card winner",
     }.get(archetype, "automated click")
 
 

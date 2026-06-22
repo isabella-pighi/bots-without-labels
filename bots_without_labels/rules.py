@@ -27,18 +27,23 @@ STRONG = "strong"
 SUPPORTING = "supporting"
 SUPPORTING_CAP = 0.24
 
-# Rule weights. No single strong rule reaches the 0.70 heuristic cutoff, so one
-# signal never flags alone; two strong replay signals, or a burst plus timing,
-# clear it. Exact replay (a repeated free-text string, a reused exact value) is
-# weighted highest because legitimate users rarely repeat either many times.
-W_TEXT_REPEAT = 0.45
-W_NUMERIC_REUSE = 0.30
-W_SAME_INSTANT_BURST = 0.22
-W_LOCAL_BURST = 0.20
-W_REGULAR_TIMING = 0.20
-W_CATEGORICAL_CONCENTRATION = 0.10
+# Rule weights. Only *timing* evidence is strong, because a same-instant cluster
+# in a narrow context or mechanically regular pacing is genuinely rare in
+# legitimate traffic. Repetition, concentration, and low entropy are *supporting*
+# only (their combined weight is capped) because popular legitimate content
+# repeats values and concentrates on popular contexts too -- a viral query or a
+# common latency looks exactly like a low-volume replay to a count-based rule, so
+# repetition alone must never flag. No single strong rule reaches the 0.70 cutoff;
+# two corroborating timing signals (same-instant *and* a local burst, or regular
+# pacing *and* a local burst) are required.
+W_SAME_INSTANT_BURST = 0.40
+W_LOCAL_BURST = 0.35
+W_REGULAR_TIMING = 0.40
+W_TEXT_REPEAT = 0.12
+W_NUMERIC_REUSE = 0.12
+W_CATEGORICAL_CONCENTRATION = 0.08
 W_CONTEXT_CLUSTER = 0.10
-W_LOW_ENTROPY = 0.10
+W_LOW_ENTROPY = 0.06
 
 # Adaptive-threshold guardrails.
 COUNT_PERCENTILE = 0.99
@@ -144,7 +149,7 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                         f"repeated {col} value",
                         f"{col} repeated {count} times",
                         W_TEXT_REPEAT,
-                        STRONG,
+                        SUPPORTING,
                         "repetition",
                     )
                 )
@@ -188,7 +193,7 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                         f"reused {col} value",
                         f"exact {col} value reused {count} times",
                         W_NUMERIC_REUSE,
-                        STRONG,
+                        SUPPORTING,
                         "repetition",
                     )
                 )
@@ -235,9 +240,9 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                     )
                 )
 
-        if context.dt_cv is not None and context.group_size is not None:
+        if context.dt_cv is not None and context.run_size is not None:
             if (
-                context.group_size[row] >= REGULAR_TIMING_MIN_EVENTS
+                context.run_size[row] >= REGULAR_TIMING_MIN_EVENTS
                 and context.dt_cv[row] <= REGULAR_TIMING_MAX_CV
             ):
                 row_hits.append(

@@ -20,7 +20,12 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
-ARCHETYPES = ("burst", "repeated_query", "mechanical_timing", "nonsense_query")
+ARCHETYPES = ("burst", "mechanical_timing", "diffuse_replay", "stealth")
+DETECTABLE_ARCHETYPES = ("burst", "mechanical_timing")
+"""The timing-based archetypes the detector is designed to catch. The other two
+(``diffuse_replay``, ``stealth``) are deliberately hard: without labels or a
+stable per-entity identifier they cannot be separated from popular or human
+traffic, so low recall on them is the honest, expected result."""
 
 _REGIONS = ("us", "gb", "de", "fr", "jp", "br", "in", "ca", "au", "it")
 _BROWSERS = ("chrome", "safari", "firefox", "edge")
@@ -195,10 +200,18 @@ def _burst_bots(
     return rows
 
 
-def _repeated_query_bots(
+def _diffuse_replay_bots(
     rng: random.Random, counter: _Counter, count: int
 ) -> list[dict[str, str]]:
-    """The same query/domain hammered across the day with a reused time-to-click."""
+    """An evasive bot: the same query/value, but spread across diverse contexts
+    and times with no burst or regular pacing.
+
+    This is deliberately one of the *hard* archetypes. Repetition from diverse
+    contexts is indistinguishable from a popular legitimate query, so a detector
+    that has no labels and no stable per-user identifier cannot honestly flag it
+    without also flagging viral searches. Recall on this archetype is expected to
+    be low -- that is the point.
+    """
 
     rows = []
     domain, query = "spam.example", "free gift card winner"
@@ -243,22 +256,31 @@ def _mechanical_timing_bots(
     return rows
 
 
-def _nonsense_query_bots(
+def _stealth_bots(
     rng: random.Random, counter: _Counter, count: int
 ) -> list[dict[str, str]]:
-    """A scripted low-entropy gibberish seed reused with a fixed click delay."""
+    """A bot that mimics human variance: a fresh query each time, a varied click
+    delay, a diverse context, and no temporal pattern.
+
+    It leaves no signature at all, so it is the floor of what unlabelled
+    detection can do -- recall here should be near the background rate. Held out
+    on purpose so the measured numbers are not just "we detect what we planted".
+    """
 
     rows = []
-    domain, query = "gibberish.example", "xxxxxxxx"
     for _ in range(count):
+        domain = rng.choice(_DOMAINS)
+        query = _phrase(rng)
         rows.append(
             {
-                "event_id": counter.next("n"),
+                "event_id": counter.next("s"),
                 "event_time": _time(rng.randint(0, 86_400)),
                 "region": rng.choice(_REGIONS),
                 "browser": rng.choice(_BROWSERS),
                 "os": rng.choice(_OS),
-                "url": _url(domain, query, 9, "us"),
+                "url": _url(
+                    domain, query, rng.randint(600, 9000), rng.choice(_REGIONS)
+                ),
             }
         )
     return rows
@@ -266,7 +288,7 @@ def _nonsense_query_bots(
 
 _BOT_BUILDERS = {
     "burst": _burst_bots,
-    "repeated_query": _repeated_query_bots,
     "mechanical_timing": _mechanical_timing_bots,
-    "nonsense_query": _nonsense_query_bots,
+    "diffuse_replay": _diffuse_replay_bots,
+    "stealth": _stealth_bots,
 }

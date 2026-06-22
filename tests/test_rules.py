@@ -9,7 +9,12 @@ import numpy as np
 from bots_without_labels.features import build_features
 from bots_without_labels.ingest import load
 from bots_without_labels.rules import apply_rules
-from bots_without_labels.synthetic import ARCHETYPES, generate, write_log
+from bots_without_labels.synthetic import (
+    ARCHETYPES,
+    DETECTABLE_ARCHETYPES,
+    generate,
+    write_log,
+)
 
 
 def _scored(tmp_path: Path):
@@ -28,13 +33,26 @@ def test_scores_are_bounded(tmp_path: Path) -> None:
     assert result.scores.max() <= 1.0
 
 
-def test_every_bot_archetype_clears_the_cutoff(tmp_path: Path) -> None:
+def test_detectable_archetypes_clear_the_cutoff(tmp_path: Path) -> None:
+    """The timing archetypes clear the heuristic cutoff; the deliberately hard
+    ones stay below it.
+
+    ``diffuse_replay`` and ``stealth`` are designed to be indistinguishable from
+    popular or human traffic without labels, so their staying below the cutoff is
+    the honest, expected result -- not a regression.
+    """
     log, result = _scored(tmp_path)
     archetypes = np.array([str(a) for a in log.archetype], dtype=object)
-    for name in ARCHETYPES:
+    for name in DETECTABLE_ARCHETYPES:
         rows = np.where(archetypes == name)[0]
         median = float(np.median(result.scores[rows]))
         assert median >= 0.70, f"{name} median heuristic {median:.2f} below cutoff"
+    for name in (a for a in ARCHETYPES if a not in DETECTABLE_ARCHETYPES):
+        rows = np.where(archetypes == name)[0]
+        median = float(np.median(result.scores[rows]))
+        assert (
+            median < 0.70
+        ), f"{name} median heuristic {median:.2f} should stay below cutoff"
 
 
 def test_legitimate_traffic_scores_low(tmp_path: Path) -> None:
