@@ -41,6 +41,20 @@ def test_doctor_command_prints_json(capsys, tmp_path: Path) -> None:
     assert payload["status"] == "ok"
 
 
+def test_generate_command_writes_log(capsys, tmp_path: Path) -> None:
+    output = tmp_path / "sample.tsv"
+    exit_code = cli.main(
+        ["generate", "--output", str(output), "--legit", "100", "--bots", "20", "--seed", "0"]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["total_events"] == 120
+    assert payload["planted_bots"] == 20
+    assert output.exists()
+    assert output.read_text(encoding="utf-8").splitlines()[0].startswith("event_id\t")
+
+
 def test_run_command_reports_missing_input_without_traceback(
     capsys, tmp_path: Path
 ) -> None:
