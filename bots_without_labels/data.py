@@ -435,7 +435,7 @@ def _parse_int_param(value: str | None, default: int) -> int:
 
 
 def iter_event_dicts(events: Iterable[ClickEvent]) -> Iterable[dict[str, object]]:
-    """Yield JSON-serialisable event dictionaries for reports and dashboards."""
+    """Yield JSON-serialisable event dictionaries for the notebook and review."""
 
     for event in events:
         yield {

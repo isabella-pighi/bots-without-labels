@@ -5,7 +5,7 @@
 - Python **3.11 or newer**.
 - [uv](https://docs.astral.sh/uv/) (recommended) — handles the virtual
   environment and dependencies from `uv.lock`.
-- A modern web browser for the dashboard.
+- [Jupyter](https://jupyter.org/) to run the narrative notebook (`uv run jupyter lab`).
 
 The Extended Isolation Forest backend (`isotree`) is an optional extra enabled
 with `--extra eif`. It is recommended for the strongest anomaly model.
@@ -28,21 +28,10 @@ pip install -e ".[eif]"
 python -m pytest
 ```
 
-## Run The Dashboard
-
-```bash
-uv run --extra eif python -m bots_without_labels.web --port 8000
-```
-
-Open <http://localhost:8000>. Options: `--port <n>` (default 8000),
-`--host <addr>` (default `127.0.0.1`). The dashboard serves whatever analysis is
-present under `run-output/` and can also start a new analysis in the browser via
-**Run analysis** / file upload.
-
 ## Generate Results From A Log
 
 Input logs are not committed to this repository (see `data/README.md`). Point the
-CLI at your log, then open the dashboard:
+CLI at your log:
 
 ```bash
 uv run --extra eif python -m bots_without_labels.cli run \
@@ -54,6 +43,15 @@ This writes `predictions.tsv` and supporting artefacts under `run-output/`. Runs
 are deterministic for a given input. (A synthetic generator that produces an
 example log is being added — see `TODO.md`.)
 
+## Explore The Results
+
+Open the narrative notebook to load a log, run the detector, inject synthetic
+labels, and visualise the results inline:
+
+```bash
+uv run jupyter lab    # then open the notebook under notebooks/
+```
+
 ## Outputs
 
 - `run-output/predictions.tsv` — the two-column `event_id` / `is_bot` prediction.
@@ -62,7 +60,6 @@ example log is being added — see `TODO.md`.)
 
 ## Troubleshooting
 
-- **Port already in use** — choose another port: `... --port 8011`.
 - **`isotree` build issues** — it needs a C/C++ toolchain; install your
   platform's build tools, or omit `--extra eif` to fall back to the non-EIF path.
 - **Slow first run** — `uv` downloads and builds dependencies once, then caches

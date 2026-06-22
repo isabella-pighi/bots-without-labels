@@ -391,7 +391,7 @@ def test_anomaly_classes_use_selected_counts_and_ml_only_population() -> None:
     assert "not proven fraud labels" in classes["scope"]
 
 
-def test_selected_event_dicts_include_dashboard_filter_fields() -> None:
+def test_selected_event_dicts_include_review_filter_fields() -> None:
     events = [
         _classified_event(
             "evt_replay_context",

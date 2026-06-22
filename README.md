@@ -21,11 +21,10 @@ that runs on arbitrary logs. Current state:
 | Area | State |
 |---|---|
 | Rules + EIF detection on click logs | ✅ working |
-| Local review dashboard | ✅ working |
 | Dynamic (Kneedle) threshold selection | ✅ working |
 | Autodetecting loader for any CSV/TSV/JSON log | 🚧 in progress |
 | Synthetic data generator + label injection + measured recall/precision | 🚧 in progress |
-| Narrative analysis notebook | 🚧 in progress |
+| Narrative analysis notebook (the way you read results and visualise) | 🚧 in progress |
 
 ## How It Works
 
@@ -59,12 +58,13 @@ cd bots-without-labels
 uv run --extra eif python -m bots_without_labels.cli run \
   --input data/your-log.tsv --output-dir run-output
 
-# Explore the results in the local dashboard
-uv run --extra eif python -m bots_without_labels.web --port 8000   # http://localhost:8000
-
 # Run the test suite
 uv run --extra eif python -m pytest
 ```
+
+The analysis is explored and visualised in the **narrative notebook** (see
+`notebooks/`), which loads a log, runs the detector, injects synthetic labels,
+and reports measured recall/precision — all inline.
 
 You supply your own log under `data/` (it is gitignored). A synthetic generator
 that produces an example dataset — and doubles as ground truth for label
@@ -74,20 +74,13 @@ injection — is being added so the repo runs end-to-end on clone.
 
 | Path | Purpose |
 |---|---|
-| `bots_without_labels/` | The detection package: parsing, features, rules, EIF, CLI, and the HTTP dashboard (`web.py`). |
+| `bots_without_labels/` | The detection package: parsing, features, rules, EIF, and CLI. |
+| `notebooks/` | The narrative analysis notebook — where results are explored and visualised. |
 | `data/` | Where to place input logs (not committed). |
 | `run-output/` | Generated analysis: artefacts and `predictions.tsv` / `predictions-extended.tsv`. |
-| `tests/` | The pytest suite for the pipeline, dashboard, and supporting modules. |
+| `tests/` | The pytest suite for the pipeline and supporting modules. |
 | `development approach/` | The agentic development-team model: roles, prompts, principles, and architecture. |
 | `TODO.md` | The forward-looking roadmap. |
-
-## The Dashboard
-
-Sections for **Overview**, **Decision Logic** (decision rule, dynamic EIF
-threshold plot, probability-perspective summary), **Traffic Explorer**
-(filterable candidate rows with per-event rule evidence and single-event lookup),
-**Patterns**, and **Help** (a glossary of terms and output fields). It also serves
-a feature-matrix viewer at `/features` and the prediction downloads.
 
 ## Development Approach
 

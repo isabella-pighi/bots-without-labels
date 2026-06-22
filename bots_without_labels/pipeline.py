@@ -568,7 +568,7 @@ def _threshold_sensitivity(
         events: Scored events from the current pipeline run.
 
     Returns:
-        JSON-ready scenario rows for report and dashboard presentation.
+        JSON-ready scenario rows for notebook and review presentation.
     """
 
     scores = [event.combined_score for event in events]
@@ -1258,7 +1258,7 @@ def _anomaly_filtering_options() -> list[dict[str, str]]:
 
 
 def _selected_event_dicts(events: list[ClickEvent]) -> list[dict[str, object]]:
-    """Return selected events with dashboard classification fields attached."""
+    """Return selected events with review classification fields attached."""
 
     rows = []
     for event in events:
