@@ -40,8 +40,8 @@ uv run --extra eif python -m bots_without_labels.cli run \
 ```
 
 This writes `predictions.tsv` and supporting artefacts under `run-output/`. Runs
-are deterministic for a given input. (A synthetic generator that produces an
-example log is being added — see `TODO.md`.)
+are deterministic for a given input. To produce an example log with planted bots,
+use `python -m bots_without_labels.cli generate --output data/sample.tsv`.
 
 ## Explore The Results
 

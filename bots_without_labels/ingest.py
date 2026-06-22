@@ -385,6 +385,8 @@ def _read_delimited(path: Path, source_format: str, sample: str) -> pd.DataFrame
         na_filter=False,
         skip_blank_lines=True,
         engine="python",
+        encoding="utf-8",
+        encoding_errors="replace",
     )
     if not has_header:
         frame.columns = [f"col{i}" for i in range(frame.shape[1])]
@@ -396,13 +398,19 @@ def _read_delimited(path: Path, source_format: str, sample: str) -> pd.DataFrame
 def _read_json(path: Path, source_format: str) -> pd.DataFrame:
     if source_format == "jsonl":
         records = []
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line_number, line in enumerate(handle, start=1):
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     records.append(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Line {line_number} is not valid JSON: {exc}"
+                    ) from exc
     else:
-        with path.open("r", encoding="utf-8") as handle:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
             data = json.load(handle)
         records = _records_from_json(data)
     return pd.json_normalize(records)
@@ -579,12 +587,21 @@ def _expand_url_columns(raw: pd.DataFrame) -> dict[str, str]:
                 if key not in keys:
                     keys.append(key)
         for key in keys:
-            new_name = f"{name}__{key}"
-            if new_name in raw.columns:
-                continue
+            new_name = _unique_column_name(f"{name}__{key}", raw.columns)
             raw[new_name] = [fields.get(key, "") for fields in parsed]
             derived[new_name] = name
     return derived
+
+
+def _unique_column_name(name: str, existing) -> str:
+    """Return ``name`` or a numbered variant that does not collide."""
+
+    if name not in existing:
+        return name
+    suffix = 1
+    while f"{name}_{suffix}" in existing:
+        suffix += 1
+    return f"{name}_{suffix}"
 
 
 def _parse_url_fields(value: str) -> dict[str, str]:

@@ -70,11 +70,11 @@ def run_doctor(
         checks.append({"name": name, "ok": ok, "detail": detail})
 
     python_version = platform.python_version()
-    python_ok = sys.version_info >= (3, 10)
+    python_ok = sys.version_info >= (3, 11)
     add_check(
         "python",
         python_ok,
-        f"Python {python_version}; required >= 3.10",
+        f"Python {python_version}; required >= 3.11",
     )
 
     for module_name in ("numpy", "pandas", "scipy"):

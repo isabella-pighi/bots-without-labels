@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from .anomaly import score_matrix
-from .atomic import atomic_text_writer
+from .atomic import atomic_path_writer, atomic_text_writer
 from .features import FeatureSet, build_features
 from .ingest import Schema, load
 from .rules import RulesResult, apply_rules
@@ -306,7 +306,8 @@ def _write_threshold_plot(path: Path, ml_scores: np.ndarray, cutoff: float) -> N
     axis.legend(loc="best")
     axis.grid(True, alpha=0.25)
     figure.tight_layout()
-    figure.savefig(path, dpi=160)
+    with atomic_path_writer(path, "wb") as tmp_path:
+        figure.savefig(tmp_path, dpi=160, format="png")
     plt.close(figure)
 
 
