@@ -160,3 +160,91 @@ def test_entity_monotony_falls_back_without_relational_structure(
     bot_rows = np.where(actor == "botactor")[0]
     assert _fired(result, "entity_monotony", bot_rows).all()
     assert (result.scores[bot_rows] >= 0.70).all()
+
+
+def _timing_result(tmp_path: Path, timestamps: list[str], name: str):
+    """Score a busy single-context burst at a chosen timestamp granularity.
+
+    Every row shares one categorical context so the burst/same-instant rules see
+    a dense pile; only the timestamp spacing differs between callers, which is
+    exactly what the dense-timing resolution gate keys on.
+    """
+
+    header = "ts,channel,amount"
+    rows = [header]
+    for stamp in timestamps:
+        rows.append(f"{stamp},A,1.0")
+    path = tmp_path / f"{name}.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    loaded = load(path)
+    feature_set = build_features(loaded.frame, loaded.schema)
+    return apply_rules(loaded.frame, loaded.schema, feature_set)
+
+
+def _rule_ids(result) -> set[str]:
+    return {hit.rule_id for row in result.hits for hit in row}
+
+
+def test_dense_timing_fires_at_fine_resolution(tmp_path: Path) -> None:
+    """At sub-second resolution a same-instant pile and a local burst are genuine
+    simultaneity, so both dense-timing rules fire."""
+
+    instants = [
+        "2020-01-01 00:00:00.000",
+        "2020-01-01 00:00:00.500",
+        "2020-01-01 00:00:01.000",
+        "2020-01-01 00:00:01.500",
+        "2020-01-01 00:00:02.000",
+        "2020-01-01 00:00:02.500",
+    ]
+    timestamps = [stamp for stamp in instants for _ in range(8)]
+    result = _timing_result(tmp_path, timestamps, "fine")
+
+    assert result.thresholds["dense_timing_active"] is True
+    assert result.thresholds["timestamp_resolution"] < 10.0
+    fired = _rule_ids(result)
+    assert "same_instant_burst" in fired
+    assert "local_burst" in fired
+
+
+def test_dense_timing_suppressed_at_coarse_resolution(tmp_path: Path) -> None:
+    """The identical pile snapped to a minute grid -- a 60s clock, coarser than
+    the 10s burst window -- is binning, not simultaneity, so both dense-timing
+    rules are gated off and carry no evidence."""
+
+    minutes = [
+        "2020-01-01 00:00:00",
+        "2020-01-01 00:01:00",
+        "2020-01-01 00:02:00",
+        "2020-01-01 00:03:00",
+        "2020-01-01 00:04:00",
+        "2020-01-01 00:05:00",
+    ]
+    timestamps = [stamp for stamp in minutes for _ in range(8)]
+    result = _timing_result(tmp_path, timestamps, "coarse")
+
+    assert result.thresholds["dense_timing_active"] is False
+    assert result.thresholds["timestamp_resolution"] >= 10.0
+    fired = _rule_ids(result)
+    assert "same_instant_burst" not in fired
+    assert "local_burst" not in fired
+
+
+def test_dense_timing_resolution_is_robust_to_one_small_gap(tmp_path: Path) -> None:
+    """A single jittered, off-grid timestamp on an otherwise minute-binned clock
+    must not flip the source to fine-resolution: the median positive gap stays at
+    60s, so the gate still suppresses the dense-timing rules."""
+
+    minutes = [f"2020-01-01 00:{m:02d}:00" for m in range(20)]
+    timestamps = [stamp for stamp in minutes for _ in range(8)]
+    # One stray row a half-second after the first minute -- the only sub-10s gap,
+    # a lone clock glitch among 19 clean 60s gaps. A low percentile ignores this
+    # sparse tail of jitter, so the clock still reads ~60s and the gate holds.
+    timestamps.append("2020-01-01 00:00:00.500")
+    result = _timing_result(tmp_path, timestamps, "jittered")
+
+    assert result.thresholds["dense_timing_active"] is False
+    assert result.thresholds["timestamp_resolution"] >= 10.0
+    fired = _rule_ids(result)
+    assert "same_instant_burst" not in fired
+    assert "local_burst" not in fired

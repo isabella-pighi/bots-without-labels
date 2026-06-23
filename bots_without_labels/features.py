@@ -49,6 +49,13 @@ ENTITY_MIN_DISTINCT = 10
 ENTITY_DIVERSITY_BINS = 8
 """Quantile bins applied to numeric columns before per-entity entropy."""
 
+RESOLUTION_GAP_PERCENTILE = 5
+"""Percentile of positive inter-timestamp gaps taken as the clock's resolution.
+A *low* percentile (the finest typical spacing) -- not the median -- so a sparse
+log whose events are far apart is not mistaken for a coarse clock; not the strict
+minimum, so a sparse tail of off-grid jitter (a few stray fine gaps) cannot lower
+it. See :func:`_timestamp_resolution`."""
+
 _MISSING = "\x00NA"
 
 
@@ -65,6 +72,13 @@ class FeatureContext:
         timestamp_count: Per-row count of rows sharing the exact timestamp.
         burst_count: Per-row local click count within the burst window and the
             row's categorical context.
+        timestamp_resolution: Typical granularity of the primary timestamp, in
+            seconds -- the *median* positive gap between consecutive distinct
+            timestamps, i.e. the grid the clock is effectively quantised to. The
+            median (not the minimum) is used so a single off-grid pair cannot make
+            an otherwise minute-binned source look fine-resolution. ``None`` when
+            there is no timestamp or fewer than two distinct values. Dense-timing
+            rules use it to ignore within-window co-occurrence on coarse clocks.
         dt_std: Per-row inter-arrival standard deviation within the burst-run.
         dt_cv: Per-row inter-arrival coefficient of variation within the burst-run.
         run_size: Per-row size of the row's burst-run (the contiguous, densely
@@ -95,6 +109,7 @@ class FeatureContext:
     count_values: dict[str, list[int]] = field(default_factory=dict)
     context_count: np.ndarray | None = None
     timestamp_count: np.ndarray | None = None
+    timestamp_resolution: float | None = None
     burst_count: np.ndarray | None = None
     dt_std: np.ndarray | None = None
     dt_cv: np.ndarray | None = None
@@ -185,6 +200,12 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
     # Numeric value and exact-value repetition.
     for name in numerics:
         numeric = pd.to_numeric(frame[name], errors="coerce")
+        # Treat non-finite values as missing: real captures (e.g. CICIDS flow
+        # throughput) carry literal "Infinity"/"NaN" cells from divide-by-zero
+        # rates, which ``to_numeric`` parses to +/-inf. Left in, they poison the
+        # downstream median/std standardisation (an inf column makes every
+        # deviation NaN) and would otherwise need scrubbing at scoring time.
+        numeric = numeric.replace([np.inf, -np.inf], np.nan)
         # Median-fill missing values; fall back to 0 when the whole column is
         # missing (median is NaN) so the matrix never carries NaN into scoring.
         median = numeric.median()
@@ -227,6 +248,7 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         add("hour", times.dt.hour.fillna(0).to_numpy(dtype=float), "time")
         ts_counts, ts_distinct = _value_counts(frame[timestamp])
         context.timestamp_count = ts_counts
+        context.timestamp_resolution = _timestamp_resolution(times)
         context.count_values["__timestamp__"] = ts_distinct
         add("same_time__conc", np.log1p(ts_counts), "burst")
 
@@ -443,6 +465,41 @@ def _norm_entropy(values: np.ndarray) -> float:
     probabilities = counts / total
     h = float(-(probabilities * np.log(probabilities)).sum())
     return h / np.log(total)
+
+
+def _timestamp_resolution(times: pd.Series) -> float | None:
+    """Return the timestamp's effective clock resolution in seconds, or ``None``.
+
+    A low percentile (:data:`RESOLUTION_GAP_PERCENTILE`) of the positive gaps
+    between consecutive *distinct* timestamps -- the grid the clock is effectively
+    quantised to. Two design choices keep it honest on real and synthetic logs:
+
+    * **Distinct, deduped first** -- repeated (same-instant) timestamps would
+      otherwise drive the estimate to zero.
+    * **A low percentile, not the median** -- the median is the *typical spacing*,
+      which on a sparse log (events minutes apart but a one-second clock) is large
+      even though the clock is fine; it would wrongly read as coarse and suppress
+      the timing rules that catch a sub-second burst inside that sparse log. The
+      finest-typical spacing (a low percentile) reflects the clock, not the load.
+    * **Not the strict minimum** -- a sparse tail of off-grid jitter (a handful of
+      stray fine gaps on an otherwise minute-binned clock) cannot pull a low
+      percentile below the grid, so the estimate stays robust to clock glitches.
+
+    Returns ``None`` when there is no valid timestamp or fewer than two distinct
+    values (no spacing to measure), in which case dense-timing rules stay active.
+    """
+
+    valid = times.dropna()
+    if valid.empty:
+        return None
+    distinct = np.unique(valid.to_numpy(dtype="datetime64[ns]").astype("int64"))
+    if distinct.size < 2:
+        return None
+    gaps = np.diff(distinct)
+    gaps = gaps[gaps > 0]
+    if gaps.size == 0:
+        return None
+    return float(np.percentile(gaps, RESOLUTION_GAP_PERCENTILE)) / 1e9
 
 
 def _temporal_context(

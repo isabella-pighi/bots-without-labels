@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .features import FeatureSet
+from .features import BURST_WINDOW_SECONDS, FeatureSet
 from .ingest import Schema
 
 # Evidence strengths.
@@ -158,6 +158,23 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
         }
     )
 
+    # Dense-timing evidence -- a same-instant collision (`same_instant_burst`) or
+    # a short-window pile-up (`local_burst`) -- assumes the clock is fine enough
+    # that within-window co-occurrence reflects genuine simultaneity. When the
+    # timestamps are quantised to a grid at least as coarse as the burst window
+    # (e.g. a minute-resolution flow log), a "same instant" is really a wide bin
+    # holding many independent events, so every busy bin trips these rules on
+    # benign volume. We therefore gate both on the measured timestamp resolution
+    # and let the resolution-independent evidence (per-entity monotony, the hub
+    # gate) carry the decision. The cost is that on such logs a bot whose *only*
+    # tell is sub-window timing is unobservable at this grid -- but so is any
+    # genuine burst, so the rules could not separate it from benign traffic
+    # anyway. Resolution unknown (no or degenerate timestamp) leaves them active.
+    resolution = context.timestamp_resolution
+    dense_timing_active = resolution is None or resolution < BURST_WINDOW_SECONDS
+    thresholds["timestamp_resolution"] = resolution
+    thresholds["dense_timing_active"] = dense_timing_active
+
     # Adaptive per-entity diversity cut: the low tail of behavioural diversity
     # among entities with enough volume to baseline, capped by an absolute
     # ceiling so a log with no monotonous actors flags none.
@@ -273,7 +290,7 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                     )
                 )
 
-        if context.timestamp_count is not None:
+        if dense_timing_active and context.timestamp_count is not None:
             count = int(context.timestamp_count[row])
             if count >= same_instant_thr:
                 row_hits.append(
@@ -287,7 +304,7 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                     )
                 )
 
-        if context.burst_count is not None:
+        if dense_timing_active and context.burst_count is not None:
             burst = int(context.burst_count[row])
             if burst >= LOCAL_BURST_FLOOR:
                 row_hits.append(
