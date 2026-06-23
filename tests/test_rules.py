@@ -68,3 +68,95 @@ def test_flagged_rows_carry_reasons(tmp_path: Path) -> None:
     for row in range(len(result.scores)):
         if result.scores[row] >= 0.70:
             assert reasons[row], "a flagged row must have at least one reason"
+
+
+def _network_log(path: Path, *, n_fill: int = 40) -> Path:
+    """A flow-like CSV with a hub, a point-to-point channel, and filler traffic.
+
+    See ``tests.test_features._network_log`` for the structure; both behaviours
+    are exercised here through the rule detector.
+    """
+
+    n_pay = 12
+    header = "src,dst," + ",".join(f"p{i}" for i in range(n_pay))
+    rows = [header]
+    zero = ",".join(["0"] * n_pay)
+    for source in range(4):
+        for _ in range(8):
+            rows.append(f"s{source},c2hub,{zero}")
+        for j in range(10):
+            payload = ",".join(str(j * n_fill * 13 + source + k * 101) for k in range(n_pay))
+            rows.append(f"s{source},benign{j % 5},{payload}")
+    for _ in range(20):
+        rows.append(f"backup,store,{zero}")
+    for host in range(n_fill):
+        for j in range(12):
+            payload = ",".join(str(j * n_fill * 13 + host + k * 101) for k in range(n_pay))
+            rows.append(f"f{host},fd{host},{payload}")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def _fired(result, rule_id, rows):
+    return np.array(
+        [any(hit.rule_id == rule_id for hit in result.hits[row]) for row in rows]
+    )
+
+
+def test_entity_monotony_escalates_only_for_a_hub(tmp_path: Path) -> None:
+    """With a source/destination structure, a monotonous entity escalates only
+    when it is a relational hub. A monotonous *point-to-point* channel -- equally
+    low-diversity but with a single counterpart -- must stay below the cutoff."""
+
+    log = load(_network_log(tmp_path / "net.csv"))
+    feature_set = build_features(log.frame, log.schema)
+    result = apply_rules(log.frame, log.schema, feature_set)
+
+    assert result.thresholds["entity_graph_active"] is True
+    assert result.thresholds["min_hub_degree"] == 3
+
+    dst = log.frame["dst"].astype(str).to_numpy()
+    src = log.frame["src"].astype(str).to_numpy()
+
+    hub_rows = np.where(dst == "c2hub")[0]
+    assert _fired(result, "entity_monotony", hub_rows).all()
+    assert (result.scores[hub_rows] >= 0.70).all()
+    hub_reason = next(
+        hit.reason
+        for hit in result.hits[hub_rows[0]]
+        if hit.rule_id == "entity_monotony"
+    )
+    assert "counterpart" in hub_reason  # the explanation cites the fan-in
+
+    channel_rows = np.where((src == "backup") & (dst == "store"))[0]
+    assert not _fired(result, "entity_monotony", channel_rows).any()
+    assert (result.scores[channel_rows] < 0.70).all()
+
+
+def test_entity_monotony_falls_back_without_relational_structure(
+    tmp_path: Path,
+) -> None:
+    """With a single entity column there is no source/hub structure to read, so
+    the hub gate is dormant and the rule fires on monotony alone."""
+
+    rows = ["actor,action,size"]
+    for _ in range(30):
+        rows.append("botactor,beacon,1")
+    actions = ["get", "post", "put", "del"]
+    for i in range(12):
+        for j in range(6):
+            rows.append(f"user{i},{actions[(i + j) % 4]},{(i * 7 + j * 13) % 50}")
+    path = tmp_path / "single.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    log = load(path)
+    feature_set = build_features(log.frame, log.schema)
+    result = apply_rules(log.frame, log.schema, feature_set)
+
+    assert result.thresholds["entity_graph_active"] is False
+    assert result.thresholds["min_hub_degree"] is None
+
+    actor = log.frame["actor"].astype(str).to_numpy()
+    bot_rows = np.where(actor == "botactor")[0]
+    assert _fired(result, "entity_monotony", bot_rows).all()
+    assert (result.scores[bot_rows] >= 0.70).all()

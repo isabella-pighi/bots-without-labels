@@ -75,6 +75,16 @@ class FeatureContext:
             other columns). Low means the entity does the same thing repeatedly.
         entity_volume: Per-row event count of the entity that gave the minimum
             diversity, so a rule can require enough volume to baseline.
+        entity_diversity_by_col / entity_volume_by_col: Per-entity-column,
+            per-row diversity and event count (the un-reduced inputs to the
+            ``entity_diversity``/``entity_volume`` minima above), so a rule can
+            reason about each entity role separately.
+        entity_degree_by_col: Per-entity-column, per-row relational degree -- the
+            number of *distinct counterpart values* (across the other entity
+            columns) the row's entity communicates with. A monotonous entity with
+            a high degree is a hub/star (e.g. a C2 fanned to by many hosts); a
+            monotonous entity with degree 1 is a single point-to-point channel. It
+            is 0 when there is only one entity column (no counterpart to count).
         categorical_columns / numeric_columns / text_columns / boolean_columns:
             The columns used, by role.
         timestamp_column: The primary timestamp column, or ``None``.
@@ -92,6 +102,9 @@ class FeatureContext:
     entity_columns: list[str] = field(default_factory=list)
     entity_diversity: np.ndarray | None = None
     entity_volume: np.ndarray | None = None
+    entity_diversity_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    entity_volume_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    entity_degree_by_col: dict[str, np.ndarray] = field(default_factory=dict)
     categorical_columns: list[str] = field(default_factory=list)
     numeric_columns: list[str] = field(default_factory=list)
     text_columns: list[str] = field(default_factory=list)
@@ -234,10 +247,15 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
     # miss -- without firing on every popular value.
     entity_cols = _entity_columns(frame, schema, categoricals)
     if entity_cols:
-        diversity, volume = _entity_baseline(frame, schema, entity_cols, categoricals)
+        diversity, volume, by_col = _entity_baseline(
+            frame, schema, entity_cols, categoricals
+        )
         context.entity_columns = entity_cols
         context.entity_diversity = diversity
         context.entity_volume = volume
+        context.entity_diversity_by_col = {c: by_col[c][0] for c in entity_cols}
+        context.entity_volume_by_col = {c: by_col[c][1] for c in entity_cols}
+        context.entity_degree_by_col = {c: by_col[c][2] for c in entity_cols}
         add("entity__diversity", diversity, "entity")
 
     names = list(columns.keys())
@@ -354,43 +372,65 @@ def _entity_baseline(
     schema: Schema,
     entity_cols: list[str],
     categoricals: list[str],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Per-row (min diversity, volume-of-that-entity) across entity columns.
+) -> tuple[np.ndarray, np.ndarray, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]]:
+    """Per-row entity baselining: diversity, volume, and relational degree.
 
-    Diversity is the mean over behavioural columns of each entity's normalised
-    Shannon entropy (0 = always identical, 1 = maximally varied). The minimum
-    across entity columns is the most automation-like view of the row.
+    For each entity column, every value is scored by its behavioural *diversity*
+    (the mean over behavioural columns of its events' normalised Shannon entropy:
+    0 = always identical, 1 = maximally varied), its *volume* (event count), and
+    its *degree* (the number of distinct counterpart values it communicates with
+    across the other entity columns).
+
+    Returns the per-row minimum diversity across entity columns (the most
+    automation-like view of the row) and the volume of that same entity, plus a
+    ``by_col`` mapping ``entity_col -> (diversity, volume, degree)`` of per-row
+    arrays so a rule can reason about each entity role and its relational
+    structure separately.
     """
 
     n_rows = int(frame.shape[0])
     diversity = np.ones(n_rows, dtype=float)
     volume = np.ones(n_rows, dtype=float)
+    by_col: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    entity_values = {col: _stringify(frame[col]).to_numpy() for col in entity_cols}
 
     for entity_col in entity_cols:
         behaviour = _behaviour_frame(frame, schema, entity_col, categoricals)
-        if not behaviour:
-            continue
-        entities = _stringify(frame[entity_col]).to_numpy()
+        entities = entity_values[entity_col]
+        counterpart_cols = [c for c in entity_cols if c != entity_col]
         members: dict[object, list[int]] = defaultdict(list)
         for index in range(n_rows):
             members[entities[index]].append(index)
 
         per_entity_div: dict[object, float] = {}
         per_entity_vol: dict[object, int] = {}
+        per_entity_deg: dict[object, int] = {}
         for key, idx in members.items():
             per_entity_vol[key] = len(idx)
-            if len(idx) < 2:
+            if len(idx) < 2 or not behaviour:
                 per_entity_div[key] = 1.0
-                continue
-            ents = [_norm_entropy(column[idx]) for column in behaviour]
-            per_entity_div[key] = float(np.mean(ents)) if ents else 1.0
+            else:
+                ents = [_norm_entropy(column[idx]) for column in behaviour]
+                per_entity_div[key] = float(np.mean(ents)) if ents else 1.0
+            # Relational degree: distinct counterparts across the other entity
+            # columns. A hub (many counterparts) is structurally unlike a single
+            # point-to-point channel even when both look equally monotonous.
+            counterparts: set[object] = set()
+            for col in counterpart_cols:
+                counterparts.update(entity_values[col][idx].tolist())
+            counterparts.discard(key)
+            per_entity_deg[key] = len(counterparts)
 
         col_div = np.array([per_entity_div[e] for e in entities], dtype=float)
         col_vol = np.array([per_entity_vol[e] for e in entities], dtype=float)
+        col_deg = np.array([per_entity_deg[e] for e in entities], dtype=float)
+        by_col[entity_col] = (col_div, col_vol, col_deg)
+
         update = col_div < diversity
         diversity = np.where(update, col_div, diversity)
         volume = np.where(update, col_vol, volume)
-    return diversity, volume
+    return diversity, volume, by_col
 
 
 def _norm_entropy(values: np.ndarray) -> float:

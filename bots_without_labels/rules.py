@@ -46,10 +46,20 @@ W_CONTEXT_CLUSTER = 0.10
 W_LOW_ENTROPY = 0.06
 
 # Per-entity monotony: a high-volume actor whose own events are highly
-# self-similar (low behavioural diversity) is strong automation evidence -- the
-# botnet host beaconing to one C2, the scraper replaying one request shape. It is
-# the per-entity, baseline-relative form of the concentration signal that the
-# global concentration rule (rightly) keeps weak, so it is strong on its own.
+# self-similar (low behavioural diversity) is automation evidence -- the botnet
+# host beaconing to one C2, the scraper replaying one request shape. It is the
+# per-entity, baseline-relative form of the concentration signal that the global
+# concentration rule (rightly) keeps weak.
+#
+# But low diversity alone is not enough to escalate to a strong, on-its-own flag:
+# a busy *legitimate* automated channel (a backup job, a keepalive, one client
+# hammering one server) is just as monotonous as a beacon, and on real traffic
+# these dominate the monotonous tail. When the log exposes a relational structure
+# (>= 2 stable entity columns, e.g. source and destination), we therefore only
+# escalate a monotonous entity that is also a *hub*: one that communicates with
+# many distinct counterparts (a fan-in/fan-out star), which is what separates a
+# C2 fanned to by many hosts from a single point-to-point channel. When no such
+# structure can be detected, the rule falls back to firing on monotony alone.
 W_ENTITY_MONOTONY = 0.70
 ENTITY_MIN_EVENTS = 12
 # Absolute ceiling: only an entity doing essentially *one* thing qualifies. It
@@ -57,6 +67,11 @@ ENTITY_MIN_EVENTS = 12
 # actor looks monotonous), where per-entity diversity carries no signal.
 ENTITY_DIVERSITY_CEILING = 0.20
 ENTITY_DIVERSITY_PERCENTILE = 0.10
+# A hub/fan-in is convergence from (or to) *more than a pair* of distinct
+# counterparts: a star needs at least this many spokes. Deliberately a small
+# structural minimum, not tuned to any particular dataset's hub degree -- raising
+# it toward a specific botnet's observed fan-out would be overfitting.
+MIN_HUB_DEGREE = 3
 
 # Adaptive-threshold guardrails.
 COUNT_PERCENTILE = 0.99
@@ -161,6 +176,20 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
             )
     thresholds["entity_diversity_cut"] = entity_cut
     thresholds["entity_columns"] = context.entity_columns
+
+    # The relational hub discriminator is only meaningful when at least two stable
+    # entity columns exist, so edges (entity -> counterpart) can be formed. With
+    # one (or no) entity column there is no source/destination structure to read,
+    # and the rule falls back to firing on monotony alone.
+    entity_graph_active = (
+        len(context.entity_columns) >= 2 and bool(context.entity_degree_by_col)
+    )
+    thresholds["entity_graph_active"] = entity_graph_active
+    thresholds["min_hub_degree"] = MIN_HUB_DEGREE if entity_graph_active else None
+    entity_value_arrays = {
+        col: frame[col].astype("string").fillna("").to_numpy()
+        for col in context.entity_columns
+    }
 
     entropy = _entropy_lookup(feature_set)
     lengths = {
@@ -289,7 +318,23 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                 )
 
         if context.entity_diversity is not None and context.entity_volume is not None:
-            if (
+            if entity_graph_active:
+                hub = _hub_entity(row, context, entity_value_arrays, entity_cut)
+                if hub is not None:
+                    col, value, diversity, volume, degree = hub
+                    row_hits.append(
+                        _hit(
+                            "entity_monotony",
+                            "low-diversity high-volume hub entity",
+                            f"{col} '{value}' repeats near-identical events "
+                            f"(diversity {diversity:.2f} over {volume} events) while "
+                            f"converging with {degree} distinct counterparts",
+                            W_ENTITY_MONOTONY,
+                            STRONG,
+                            "entity",
+                        )
+                    )
+            elif (
                 context.entity_volume[row] >= ENTITY_MIN_EVENTS
                 and context.entity_diversity[row] <= entity_cut
             ):
@@ -310,6 +355,47 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
         hits.append(row_hits)
 
     return RulesResult(scores=scores, hits=hits, thresholds=thresholds)
+
+
+def _hub_entity(
+    row: int,
+    context,
+    entity_value_arrays: dict[str, np.ndarray],
+    entity_cut: float,
+) -> tuple[str, str, float, int, int] | None:
+    """Return the row's monotonous *hub* entity, or ``None`` if it has none.
+
+    A qualifying entity is, in some entity column, high-volume
+    (``>= ENTITY_MIN_EVENTS``), low-diversity (``<= entity_cut``), and a hub --
+    communicating with at least :data:`MIN_HUB_DEGREE` distinct counterparts.
+    When several entity columns qualify, the one with the highest degree (the
+    most hub-like view of the row) is chosen.
+
+    Returns ``(column, value, diversity, volume, degree)``.
+    """
+
+    best: tuple[str, str, float, int, int] | None = None
+    for col in context.entity_columns:
+        diversity = context.entity_diversity_by_col.get(col)
+        volume = context.entity_volume_by_col.get(col)
+        degree = context.entity_degree_by_col.get(col)
+        if diversity is None or volume is None or degree is None:
+            continue
+        deg = int(degree[row])
+        if (
+            volume[row] >= ENTITY_MIN_EVENTS
+            and diversity[row] <= entity_cut
+            and deg >= MIN_HUB_DEGREE
+        ):
+            if best is None or deg > best[4]:
+                best = (
+                    col,
+                    str(entity_value_arrays[col][row]),
+                    float(diversity[row]),
+                    int(volume[row]),
+                    deg,
+                )
+    return best
 
 
 def _eligible(

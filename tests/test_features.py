@@ -107,6 +107,60 @@ def test_build_is_deterministic(tmp_path: Path) -> None:
     assert np.array_equal(first.matrix, second.matrix)
 
 
+def _network_log(path: Path, *, n_fill: int = 40) -> Path:
+    """A flow-like CSV with two entity columns (``src``/``dst``).
+
+    Contains a *hub*: one destination ``c2hub`` fanned to by four distinct
+    sources with a constant payload; a *point-to-point* monotone channel
+    (``backup`` -> ``store``); and diverse filler traffic that spreads the
+    per-entity diversity distribution so the adaptive cut is well defined. The
+    numeric payloads of the filler/benign rows step across the whole global range
+    so each entity occupies many quantile bins (genuinely diverse), rather than
+    clustering into one.
+    """
+
+    n_pay = 12
+    header = "src,dst," + ",".join(f"p{i}" for i in range(n_pay))
+    rows = [header]
+    zero = ",".join(["0"] * n_pay)
+    for source in range(4):
+        for _ in range(8):
+            rows.append(f"s{source},c2hub,{zero}")
+        for j in range(10):
+            payload = ",".join(str(j * n_fill * 13 + source + k * 101) for k in range(n_pay))
+            rows.append(f"s{source},benign{j % 5},{payload}")
+    for _ in range(20):
+        rows.append(f"backup,store,{zero}")
+    for host in range(n_fill):
+        for j in range(12):
+            payload = ",".join(str(j * n_fill * 13 + host + k * 101) for k in range(n_pay))
+            rows.append(f"f{host},fd{host},{payload}")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def test_entity_degree_distinguishes_hub_from_point_to_point(tmp_path: Path) -> None:
+    log = load(_network_log(tmp_path / "net.csv"))
+    fs = build_features(log.frame, log.schema)
+
+    assert fs.context.entity_columns == ["src", "dst"]
+    assert set(fs.context.entity_degree_by_col) == {"src", "dst"}
+
+    dst = log.frame["dst"].astype(str).to_numpy()
+    src = log.frame["src"].astype(str).to_numpy()
+    dst_degree = fs.context.entity_degree_by_col["dst"]
+    src_degree = fs.context.entity_degree_by_col["src"]
+
+    # The hub destination is reached by four distinct sources (a star).
+    hub_rows = np.where(dst == "c2hub")[0]
+    assert float(dst_degree[hub_rows][0]) == 4.0
+    # The backup->store channel is point-to-point: degree 1 on both ends.
+    backup_rows = np.where(src == "backup")[0]
+    assert float(src_degree[backup_rows][0]) == 1.0
+    store_rows = np.where(dst == "store")[0]
+    assert float(dst_degree[store_rows][0]) == 1.0
+
+
 def test_minimal_log_without_timestamp_or_categoricals(tmp_path: Path) -> None:
     path = tmp_path / "amounts.csv"
     path.write_text(
