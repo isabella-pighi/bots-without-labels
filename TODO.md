@@ -17,6 +17,54 @@ on purpose.
 | P2 | Important but less urgent. Improves robustness, stability, or coverage. |
 | P3 | Future-facing. Useful when more data, labels, or external context exist. |
 
+## Next Session (picked up 2026-06-23 PM)
+
+Concrete follow-ups from the real-data evaluation (see `evaluation/FINDINGS.md`).
+Per-entity baselining now recovers the CICIDS botnet (recall 0.022 → 0.998) but
+precision is only 0.144: busy *legitimate* servers are as low-diversity as bots,
+so the entity-monotony rule over-flags. These are the steps to take it further.
+
+### A. Lift entity-monotony precision past the busy-benign ceiling (P1)
+
+Diversity alone cannot separate a botnet host from a busy legitimate server —
+only the shared C2 hub is uniquely separable. Add a *second discriminator* that
+fires only when an entity is both monotonous **and** structurally bot-like:
+
+- Sub-minute timing regularity, where timestamp resolution allows (a beacon has
+  a regular cadence; a busy server does not). Couples with item 6.
+- Relational structure: one external hub contacted by *many* monotonous sources.
+  This is the graph view in item 9 — promote it from P3 for the entity case.
+- Or a per-volume-stratified diversity baseline: compare a busy entity against
+  other busy entities, not against the global tail.
+
+### B. Calibrate the entity-monotony threshold (P1)
+
+The cut is currently a fixed 10th-percentile with a 0.20 ceiling — recall 0.998
+but a 21.9% flag rate. Try gap/knee detection on the entity-diversity
+distribution, and add a heuristic flag-rate cap mirroring `MAX_ML_FLAG_RATE`.
+Measure every change on the benchmark; do **not** tune to the single C2 hub.
+
+### C. Grow the labelled real-data benchmark suite (P2)
+
+`tests/test_real_benchmark.py` pins one attack family. Add the other CICIDS
+families (PortScan, DDoS, web attacks, infiltration) and one non-network log,
+each as a skip-if-absent benchmark, so recall/precision are tracked per attack
+type and a regression cannot hide behind the synthetic suite. Extends item 10.
+
+### D. Route the per-entity change through HCOM Codex review
+
+The fix (commit 98646c1) was committed directly, bypassing the PM-commits-only
+protocol. Have the ML-engineer-reviewer (Codex) review `features.py` / `rules.py`
+before treating it as final.
+
+### E. Minor robustness (P2/P3)
+
+- Sanitise `Infinity` / `NaN` in numeric features *before* standardisation;
+  results are already nan-guarded, but CICIDS flow data raises a numpy warning.
+- Revisit integer-coded identifier inference: a `session ID` / numeric IP is
+  typed numeric, so per-entity baselining and id handling miss it. Couples with
+  the schema-override / entity-id hints in item 4.
+
 ## P1: Core Promise
 
 ### 1. Run the schema-driven engine end to end
