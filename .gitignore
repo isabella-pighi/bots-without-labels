@@ -26,6 +26,8 @@ data/*.csv
 data/*.json
 data/*.jsonl
 data/*.zip
+# Local benchmark working data (samples extracted/downloaded ad hoc)
+data/samples/
 
 # Local notes
 *.local

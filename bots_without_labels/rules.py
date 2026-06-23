@@ -45,6 +45,19 @@ W_CATEGORICAL_CONCENTRATION = 0.08
 W_CONTEXT_CLUSTER = 0.10
 W_LOW_ENTROPY = 0.06
 
+# Per-entity monotony: a high-volume actor whose own events are highly
+# self-similar (low behavioural diversity) is strong automation evidence -- the
+# botnet host beaconing to one C2, the scraper replaying one request shape. It is
+# the per-entity, baseline-relative form of the concentration signal that the
+# global concentration rule (rightly) keeps weak, so it is strong on its own.
+W_ENTITY_MONOTONY = 0.70
+ENTITY_MIN_EVENTS = 12
+# Absolute ceiling: only an entity doing essentially *one* thing qualifies. It
+# also keeps the rule dormant on low-dimensional logs (few columns -> every
+# actor looks monotonous), where per-entity diversity carries no signal.
+ENTITY_DIVERSITY_CEILING = 0.20
+ENTITY_DIVERSITY_PERCENTILE = 0.10
+
 # Adaptive-threshold guardrails.
 COUNT_PERCENTILE = 0.99
 TEXT_REPEAT_FLOOR = 10
@@ -129,6 +142,25 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
             "local_burst": LOCAL_BURST_FLOOR,
         }
     )
+
+    # Adaptive per-entity diversity cut: the low tail of behavioural diversity
+    # among entities with enough volume to baseline, capped by an absolute
+    # ceiling so a log with no monotonous actors flags none.
+    entity_cut = 0.0
+    if context.entity_diversity is not None and context.entity_volume is not None:
+        qualified = context.entity_volume >= ENTITY_MIN_EVENTS
+        if qualified.any():
+            entity_cut = min(
+                ENTITY_DIVERSITY_CEILING,
+                float(
+                    np.quantile(
+                        context.entity_diversity[qualified],
+                        ENTITY_DIVERSITY_PERCENTILE,
+                    )
+                ),
+            )
+    thresholds["entity_diversity_cut"] = entity_cut
+    thresholds["entity_columns"] = context.entity_columns
 
     entropy = _entropy_lookup(feature_set)
     lengths = {
@@ -253,6 +285,24 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                         W_REGULAR_TIMING,
                         STRONG,
                         "timing",
+                    )
+                )
+
+        if context.entity_diversity is not None and context.entity_volume is not None:
+            if (
+                context.entity_volume[row] >= ENTITY_MIN_EVENTS
+                and context.entity_diversity[row] <= entity_cut
+            ):
+                row_hits.append(
+                    _hit(
+                        "entity_monotony",
+                        "low-diversity high-volume entity",
+                        f"entity repeats near-identical events "
+                        f"(diversity {context.entity_diversity[row]:.2f} over "
+                        f"{int(context.entity_volume[row])} events)",
+                        W_ENTITY_MONOTONY,
+                        STRONG,
+                        "entity",
                     )
                 )
 

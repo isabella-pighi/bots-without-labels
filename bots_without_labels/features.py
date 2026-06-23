@@ -44,6 +44,11 @@ SPARSE_TIMING_SENTINEL = 999.0
 """Inter-arrival std/cv for groups too small to be considered regular. The high
 value keeps sparse groups from looking mechanically regular."""
 
+ENTITY_MIN_DISTINCT = 10
+"""An actor-like column needs at least this many distinct values to baseline."""
+ENTITY_DIVERSITY_BINS = 8
+"""Quantile bins applied to numeric columns before per-entity entropy."""
+
 _MISSING = "\x00NA"
 
 
@@ -64,6 +69,12 @@ class FeatureContext:
         dt_cv: Per-row inter-arrival coefficient of variation within the burst-run.
         run_size: Per-row size of the row's burst-run (the contiguous, densely
             spaced sub-sequence of its categorical context, not the whole group).
+        entity_columns: Actor-like columns used for per-entity baselining.
+        entity_diversity: Per-row minimum, across entity columns, of the entity's
+            behavioural diversity (mean normalised entropy of its events over the
+            other columns). Low means the entity does the same thing repeatedly.
+        entity_volume: Per-row event count of the entity that gave the minimum
+            diversity, so a rule can require enough volume to baseline.
         categorical_columns / numeric_columns / text_columns / boolean_columns:
             The columns used, by role.
         timestamp_column: The primary timestamp column, or ``None``.
@@ -78,6 +89,9 @@ class FeatureContext:
     dt_std: np.ndarray | None = None
     dt_cv: np.ndarray | None = None
     run_size: np.ndarray | None = None
+    entity_columns: list[str] = field(default_factory=list)
+    entity_diversity: np.ndarray | None = None
+    entity_volume: np.ndarray | None = None
     categorical_columns: list[str] = field(default_factory=list)
     numeric_columns: list[str] = field(default_factory=list)
     text_columns: list[str] = field(default_factory=list)
@@ -213,6 +227,19 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         add("dt__std", np.log1p(dt_std), "timing")
         add("dt__cv", np.log1p(dt_cv), "timing")
 
+    # Per-entity behavioural diversity. An automated actor (botnet host, scraper,
+    # click farm) emits internally self-similar events; a popular *legitimate*
+    # actor fans out. Scoring each entity by how repetitive its own events are
+    # catches repetition-based bots that the globally-capped concentration rules
+    # miss -- without firing on every popular value.
+    entity_cols = _entity_columns(frame, schema, categoricals)
+    if entity_cols:
+        diversity, volume = _entity_baseline(frame, schema, entity_cols, categoricals)
+        context.entity_columns = entity_cols
+        context.entity_diversity = diversity
+        context.entity_volume = volume
+        add("entity__diversity", diversity, "entity")
+
     names = list(columns.keys())
     matrix = (
         np.column_stack([columns[name] for name in names])
@@ -274,6 +301,108 @@ def _unique_char_ratio(value: str) -> float:
     if not value:
         return 0.0
     return len(set(value)) / len(value)
+
+
+def _entity_columns(
+    frame: pd.DataFrame, schema: Schema, categoricals: list[str]
+) -> list[str]:
+    """Pick actor-like columns to baseline: categoricals whose values recur.
+
+    An entity column has many distinct values (so it identifies actors, not a
+    handful of categories) but each value recurs (so an actor has several events
+    to baseline), and is not essentially unique (that is an identifier).
+    """
+
+    n_rows = int(frame.shape[0])
+    out: list[str] = []
+    for name in categoricals:
+        counts = frame[name].value_counts()
+        distinct = len(counts)
+        if distinct < ENTITY_MIN_DISTINCT or distinct >= 0.95 * n_rows:
+            continue
+        if float(counts.median()) < 2:
+            continue
+        out.append(name)
+    return out
+
+
+def _behaviour_frame(
+    frame: pd.DataFrame, schema: Schema, entity_col: str, categoricals: list[str]
+) -> list[np.ndarray]:
+    """Coarse behavioural columns for one entity's events (ids/text excluded)."""
+
+    out: list[np.ndarray] = []
+    for name in categoricals + schema.columns_with_role(Role.NUMERIC):
+        if name == entity_col:
+            continue
+        if schema.role_of(name) == Role.NUMERIC:
+            num = pd.to_numeric(frame[name], errors="coerce")
+            binned = pd.qcut(
+                num.rank(method="first"),
+                q=ENTITY_DIVERSITY_BINS,
+                labels=False,
+                duplicates="drop",
+            )
+            out.append(binned.fillna(-1).to_numpy())
+        else:
+            out.append(_stringify(frame[name]).to_numpy())
+    return out
+
+
+def _entity_baseline(
+    frame: pd.DataFrame,
+    schema: Schema,
+    entity_cols: list[str],
+    categoricals: list[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-row (min diversity, volume-of-that-entity) across entity columns.
+
+    Diversity is the mean over behavioural columns of each entity's normalised
+    Shannon entropy (0 = always identical, 1 = maximally varied). The minimum
+    across entity columns is the most automation-like view of the row.
+    """
+
+    n_rows = int(frame.shape[0])
+    diversity = np.ones(n_rows, dtype=float)
+    volume = np.ones(n_rows, dtype=float)
+
+    for entity_col in entity_cols:
+        behaviour = _behaviour_frame(frame, schema, entity_col, categoricals)
+        if not behaviour:
+            continue
+        entities = _stringify(frame[entity_col]).to_numpy()
+        members: dict[object, list[int]] = defaultdict(list)
+        for index in range(n_rows):
+            members[entities[index]].append(index)
+
+        per_entity_div: dict[object, float] = {}
+        per_entity_vol: dict[object, int] = {}
+        for key, idx in members.items():
+            per_entity_vol[key] = len(idx)
+            if len(idx) < 2:
+                per_entity_div[key] = 1.0
+                continue
+            ents = [_norm_entropy(column[idx]) for column in behaviour]
+            per_entity_div[key] = float(np.mean(ents)) if ents else 1.0
+
+        col_div = np.array([per_entity_div[e] for e in entities], dtype=float)
+        col_vol = np.array([per_entity_vol[e] for e in entities], dtype=float)
+        update = col_div < diversity
+        diversity = np.where(update, col_div, diversity)
+        volume = np.where(update, col_vol, volume)
+    return diversity, volume
+
+
+def _norm_entropy(values: np.ndarray) -> float:
+    """Shannon entropy of a value array, normalised to ``[0, 1]`` by ``log(n)``."""
+
+    _, counts = np.unique(values, return_counts=True)
+    total = counts.sum()
+    if total <= 1:
+        return 0.0
+    probabilities = counts / total
+    h = float(-(probabilities * np.log(probabilities)).sum())
+    return h / np.log(total)
 
 
 def _temporal_context(
