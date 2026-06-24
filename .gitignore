@@ -26,6 +26,7 @@ data/*.csv
 data/*.json
 data/*.jsonl
 data/*.zip
+data/*.binetflow
 # Local benchmark working data (samples extracted/downloaded ad hoc)
 data/samples/
 
