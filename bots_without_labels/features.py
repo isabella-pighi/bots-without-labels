@@ -49,12 +49,11 @@ ENTITY_MIN_DISTINCT = 10
 ENTITY_DIVERSITY_BINS = 8
 """Quantile bins applied to numeric columns before per-entity entropy."""
 
-RESOLUTION_GAP_PERCENTILE = 5
-"""Percentile of positive inter-timestamp gaps taken as the clock's resolution.
-A *low* percentile (the finest typical spacing) -- not the median -- so a sparse
-log whose events are far apart is not mistaken for a coarse clock; not the strict
-minimum, so a sparse tail of off-grid jitter (a few stray fine gaps) cannot lower
-it. See :func:`_timestamp_resolution`."""
+GRID_ALIGNMENT_TOLERANCE_SECONDS = 1e-3
+"""How close to a grid multiple a timestamp must fall to count as *on-grid*.
+A millisecond absorbs float round-trip error through ``datetime64`` without
+admitting genuinely off-grid (sub-second) instants. See :func:`_timestamp_grid`
+and :func:`_on_grid`."""
 
 _MISSING = "\x00NA"
 
@@ -72,13 +71,24 @@ class FeatureContext:
         timestamp_count: Per-row count of rows sharing the exact timestamp.
         burst_count: Per-row local click count within the burst window and the
             row's categorical context.
-        timestamp_resolution: Typical granularity of the primary timestamp, in
-            seconds -- the *median* positive gap between consecutive distinct
-            timestamps, i.e. the grid the clock is effectively quantised to. The
-            median (not the minimum) is used so a single off-grid pair cannot make
-            an otherwise minute-binned source look fine-resolution. ``None`` when
-            there is no timestamp or fewer than two distinct values. Dense-timing
-            rules use it to ignore within-window co-occurrence on coarse clocks.
+        timestamp_grid: The primary timestamp's coarse quantisation period, in
+            seconds -- the *mode* (most common) positive gap between consecutive
+            distinct timestamps, i.e. the grid the clock is effectively snapped
+            to (60s for a minute-binned flow log). The mode, not a percentile or
+            the minimum, is used so a handful of off-grid jitter timestamps cannot
+            move the detected grid: the dominant spacing wins. ``None`` when there
+            is no timestamp or fewer than two distinct values.
+        timestamp_on_grid: Per-row boolean -- whether the row's timestamp lies on
+            :attr:`timestamp_grid`, *phase included*: the grid's dominant offset is
+            recovered as the modal remainder of the distinct timestamps, so minute
+            bins at ``:30`` count as on-grid just like bins at ``:00``. A row is
+            on-grid when its circular distance to that phase is within
+            :data:`GRID_ALIGNMENT_TOLERANCE_SECONDS`. Dense-timing rules use this to
+            suppress *on-grid* co-occurrence on a coarse clock -- a wide bin holding
+            many independent events -- while still firing on an *off-grid* pile,
+            which is genuine simultaneity the clock could resolve. ``None`` when
+            there is no grid or the grid is finer than the burst window (no
+            suppression applies). See :func:`_on_grid`.
         dt_std: Per-row inter-arrival standard deviation within the burst-run.
         dt_cv: Per-row inter-arrival coefficient of variation within the burst-run.
         run_size: Per-row size of the row's burst-run (the contiguous, densely
@@ -109,7 +119,8 @@ class FeatureContext:
     count_values: dict[str, list[int]] = field(default_factory=dict)
     context_count: np.ndarray | None = None
     timestamp_count: np.ndarray | None = None
-    timestamp_resolution: float | None = None
+    timestamp_grid: float | None = None
+    timestamp_on_grid: np.ndarray | None = None
     burst_count: np.ndarray | None = None
     dt_std: np.ndarray | None = None
     dt_cv: np.ndarray | None = None
@@ -248,7 +259,10 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         add("hour", times.dt.hour.fillna(0).to_numpy(dtype=float), "time")
         ts_counts, ts_distinct = _value_counts(frame[timestamp])
         context.timestamp_count = ts_counts
-        context.timestamp_resolution = _timestamp_resolution(times)
+        grid = _timestamp_grid(times)
+        context.timestamp_grid = grid
+        if grid is not None and grid >= BURST_WINDOW_SECONDS:
+            context.timestamp_on_grid = _on_grid(times, grid)
         context.count_values["__timestamp__"] = ts_distinct
         add("same_time__conc", np.log1p(ts_counts), "burst")
 
@@ -467,23 +481,25 @@ def _norm_entropy(values: np.ndarray) -> float:
     return h / np.log(total)
 
 
-def _timestamp_resolution(times: pd.Series) -> float | None:
-    """Return the timestamp's effective clock resolution in seconds, or ``None``.
+def _timestamp_grid(times: pd.Series) -> float | None:
+    """Return the timestamp's coarse quantisation period in seconds, or ``None``.
 
-    A low percentile (:data:`RESOLUTION_GAP_PERCENTILE`) of the positive gaps
-    between consecutive *distinct* timestamps -- the grid the clock is effectively
-    quantised to. Two design choices keep it honest on real and synthetic logs:
+    The **mode** (most common value) of the positive gaps between consecutive
+    *distinct* timestamps -- the grid the clock is effectively snapped to. A
+    minute-binned flow log has a 60s mode gap; a sub-second clock has a tiny one.
+    Two design choices keep it honest on real and synthetic logs:
 
     * **Distinct, deduped first** -- repeated (same-instant) timestamps would
-      otherwise drive the estimate to zero.
-    * **A low percentile, not the median** -- the median is the *typical spacing*,
-      which on a sparse log (events minutes apart but a one-second clock) is large
-      even though the clock is fine; it would wrongly read as coarse and suppress
-      the timing rules that catch a sub-second burst inside that sparse log. The
-      finest-typical spacing (a low percentile) reflects the clock, not the load.
-    * **Not the strict minimum** -- a sparse tail of off-grid jitter (a handful of
-      stray fine gaps on an otherwise minute-binned clock) cannot pull a low
-      percentile below the grid, so the estimate stays robust to clock glitches.
+      otherwise contribute zero-length gaps and swamp the estimate.
+    * **The mode, not a percentile, the median, or the minimum** -- the dominant
+      spacing is what the clock is quantised to. A handful of off-grid jitter
+      timestamps (a few stray fine gaps on an otherwise minute-binned clock)
+      change a few rare gap values but not the *most common* one, so the detected
+      grid is robust to clock glitches. Unlike the minimum it is not moved by a
+      single stray pair; unlike the median it is not inflated by a sparse log's
+      large typical spacing -- and crucially, on a coarse clock the rules gate
+      *per collision* (see :func:`_on_grid`), so an off-grid burst inside a sparse
+      log is still observable even when the dominant grid reads coarse.
 
     Returns ``None`` when there is no valid timestamp or fewer than two distinct
     values (no spacing to measure), in which case dense-timing rules stay active.
@@ -499,7 +515,55 @@ def _timestamp_resolution(times: pd.Series) -> float | None:
     gaps = gaps[gaps > 0]
     if gaps.size == 0:
         return None
-    return float(np.percentile(gaps, RESOLUTION_GAP_PERCENTILE)) / 1e9
+    values, counts = np.unique(gaps, return_counts=True)
+    return float(values[counts.argmax()]) / 1e9
+
+
+def _on_grid(times: pd.Series, grid: float) -> np.ndarray:
+    """Per-row mask: whether each timestamp lies on the ``grid`` quantisation.
+
+    Grid membership is *phase-aware*: a coarse clock need not be aligned to the
+    epoch. Minute bins at ``:30`` (``00:00:30``, ``00:01:30``, …) are just as much
+    a 60s grid as bins at ``:00``; the grid simply has a non-zero phase. We recover
+    that phase as the **modal remainder** of the *distinct* timestamps modulo the
+    grid -- the offset the bulk of the clock's bins actually sit at. Taking it over
+    distinct timestamps (each bin counted once) keeps it robust to an off-grid
+    pile: a thousand events at one stray instant are a single distinct remainder
+    and cannot outvote the genuine bins.
+
+    A row is then on-grid when the circular distance from its remainder to that
+    phase is within :data:`GRID_ALIGNMENT_TOLERANCE_SECONDS`. So an epoch- or
+    offset-aligned bin is on-grid (a binning artifact, suppressed), while a
+    sub-grid instant (e.g. an injected burst at ``…:53``) is off-grid (genuine
+    simultaneity, kept). Missing timestamps are forced off-grid, which is harmless:
+    dense-timing rules only consult this mask for rows that already cleared a
+    same-instant or burst count.
+
+    Computed in integer nanoseconds so the modular arithmetic is exact.
+    """
+
+    grid_ns = int(round(grid * 1e9))
+    n = len(times)
+    if grid_ns <= 0:
+        return np.zeros(n, dtype=bool)
+    valid = times.notna().to_numpy()
+    nanos = times.to_numpy(dtype="datetime64[ns]").astype("int64")
+
+    distinct = np.unique(nanos[valid])
+    if distinct.size == 0:
+        return np.zeros(n, dtype=bool)
+    # Dominant grid phase: the most common bin offset across distinct timestamps.
+    distinct_phase = np.mod(distinct, grid_ns)
+    phases, counts = np.unique(distinct_phase, return_counts=True)
+    phase = phases[counts.argmax()]
+
+    remainder = np.mod(nanos, grid_ns)
+    diff = np.abs(remainder - phase)
+    circular = np.minimum(diff, grid_ns - diff)
+    tolerance_ns = int(round(GRID_ALIGNMENT_TOLERANCE_SECONDS * 1e9))
+    on_grid = circular <= tolerance_ns
+    on_grid[~valid] = False
+    return on_grid
 
 
 def _temporal_context(

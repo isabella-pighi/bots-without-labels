@@ -163,11 +163,13 @@ def test_entity_monotony_falls_back_without_relational_structure(
 
 
 def _timing_result(tmp_path: Path, timestamps: list[str], name: str):
-    """Score a busy single-context burst at a chosen timestamp granularity.
+    """Score a busy single-context pile at a chosen timestamp granularity.
 
     Every row shares one categorical context so the burst/same-instant rules see
     a dense pile; only the timestamp spacing differs between callers, which is
-    exactly what the dense-timing resolution gate keys on.
+    exactly what the per-collision grid gate keys on: a same-instant pile fires
+    when its timestamp is off the coarse grid and is suppressed when it sits on
+    the grid (a binning artifact).
     """
 
     header = "ts,channel,amount"
@@ -186,8 +188,9 @@ def _rule_ids(result) -> set[str]:
 
 
 def test_dense_timing_fires_at_fine_resolution(tmp_path: Path) -> None:
-    """At sub-second resolution a same-instant pile and a local burst are genuine
-    simultaneity, so both dense-timing rules fire."""
+    """At sub-second resolution the grid is finer than the burst window, so no
+    collision is treated as binning: a same-instant pile and a local burst are
+    genuine simultaneity and both dense-timing rules fire."""
 
     instants = [
         "2020-01-01 00:00:00.000",
@@ -200,17 +203,17 @@ def test_dense_timing_fires_at_fine_resolution(tmp_path: Path) -> None:
     timestamps = [stamp for stamp in instants for _ in range(8)]
     result = _timing_result(tmp_path, timestamps, "fine")
 
-    assert result.thresholds["dense_timing_active"] is True
-    assert result.thresholds["timestamp_resolution"] < 10.0
+    assert result.thresholds["dense_timing_gated"] is False
+    assert result.thresholds["timestamp_grid"] < 10.0
     fired = _rule_ids(result)
     assert "same_instant_burst" in fired
     assert "local_burst" in fired
 
 
-def test_dense_timing_suppressed_at_coarse_resolution(tmp_path: Path) -> None:
-    """The identical pile snapped to a minute grid -- a 60s clock, coarser than
-    the 10s burst window -- is binning, not simultaneity, so both dense-timing
-    rules are gated off and carry no evidence."""
+def test_dense_timing_suppressed_for_on_grid_coarse_bins(tmp_path: Path) -> None:
+    """Identical piles snapped to a minute grid -- a 60s clock coarser than the
+    10s burst window, every pile on-grid -- are binning, not simultaneity, so
+    both dense-timing rules are suppressed on every row and carry no evidence."""
 
     minutes = [
         "2020-01-01 00:00:00",
@@ -223,28 +226,72 @@ def test_dense_timing_suppressed_at_coarse_resolution(tmp_path: Path) -> None:
     timestamps = [stamp for stamp in minutes for _ in range(8)]
     result = _timing_result(tmp_path, timestamps, "coarse")
 
-    assert result.thresholds["dense_timing_active"] is False
-    assert result.thresholds["timestamp_resolution"] >= 10.0
+    assert result.thresholds["dense_timing_gated"] is True
+    assert result.thresholds["timestamp_grid"] >= 10.0
     fired = _rule_ids(result)
     assert "same_instant_burst" not in fired
     assert "local_burst" not in fired
 
 
-def test_dense_timing_resolution_is_robust_to_one_small_gap(tmp_path: Path) -> None:
-    """A single jittered, off-grid timestamp on an otherwise minute-binned clock
-    must not flip the source to fine-resolution: the median positive gap stays at
-    60s, so the gate still suppresses the dense-timing rules."""
+def test_dense_timing_fires_for_off_grid_pile_on_coarse_clock(tmp_path: Path) -> None:
+    """A genuine same-instant pile at an *off-grid* instant on an otherwise
+    minute-binned clock is simultaneity the clock recorded precisely, not a bin,
+    so both dense-timing rules still fire on it -- while the on-grid minute piles
+    around it stay suppressed. This is the case the old global gate wrongly hid."""
 
     minutes = [f"2020-01-01 00:{m:02d}:00" for m in range(20)]
     timestamps = [stamp for stamp in minutes for _ in range(8)]
-    # One stray row a half-second after the first minute -- the only sub-10s gap,
-    # a lone clock glitch among 19 clean 60s gaps. A low percentile ignores this
-    # sparse tail of jitter, so the clock still reads ~60s and the gate holds.
-    timestamps.append("2020-01-01 00:00:00.500")
-    result = _timing_result(tmp_path, timestamps, "jittered")
+    on_grid_count = len(timestamps)
+    # Eight events at one sub-minute instant (:17), well clear of any minute mark.
+    off_grid_pile = ["2020-01-01 00:30:17"] * 8
+    timestamps.extend(off_grid_pile)
+    result = _timing_result(tmp_path, timestamps, "offgrid")
 
-    assert result.thresholds["dense_timing_active"] is False
-    assert result.thresholds["timestamp_resolution"] >= 10.0
+    assert result.thresholds["dense_timing_gated"] is True
+    assert result.thresholds["timestamp_grid"] == 60.0
+
+    pile_rows = range(on_grid_count, on_grid_count + len(off_grid_pile))
+    assert _fired(result, "same_instant_burst", pile_rows).all()
+    assert _fired(result, "local_burst", pile_rows).all()
+
+    on_grid_rows = range(on_grid_count)
+    assert not _fired(result, "same_instant_burst", on_grid_rows).any()
+    assert not _fired(result, "local_burst", on_grid_rows).any()
+
+
+def test_dense_timing_suppressed_for_phase_offset_coarse_bins(tmp_path: Path) -> None:
+    """Minute bins at a fixed ``:30`` phase offset are just as much a 60s coarse
+    grid as bins at ``:00`` -- the clock is simply not epoch-aligned. Every pile
+    sits on the grid's dominant phase, so both dense-timing rules are suppressed;
+    epoch-anchored alignment would have wrongly fired on all of them."""
+
+    minutes = [f"2020-01-01 00:{m:02d}:30" for m in range(8)]
+    timestamps = [stamp for stamp in minutes for _ in range(8)]
+    result = _timing_result(tmp_path, timestamps, "offset")
+
+    assert result.thresholds["dense_timing_gated"] is True
+    assert result.thresholds["timestamp_grid"] == 60.0
     fired = _rule_ids(result)
     assert "same_instant_burst" not in fired
     assert "local_burst" not in fired
+
+
+def test_dense_timing_grid_is_robust_to_one_small_gap(tmp_path: Path) -> None:
+    """A single jittered, off-grid timestamp on an otherwise minute-binned clock
+    must not move the detected grid: the *mode* positive gap stays at 60s, so the
+    on-grid minute piles are still recognised as bins and suppressed."""
+
+    minutes = [f"2020-01-01 00:{m:02d}:00" for m in range(20)]
+    timestamps = [stamp for stamp in minutes for _ in range(8)]
+    on_grid_count = len(timestamps)
+    # One stray row a half-second after the first minute -- a lone clock glitch
+    # among 19 clean 60s gaps. The mode gap ignores this rare value, so the grid
+    # still reads 60s and the on-grid bins stay suppressed.
+    timestamps.append("2020-01-01 00:00:00.500")
+    result = _timing_result(tmp_path, timestamps, "jittered")
+
+    assert result.thresholds["dense_timing_gated"] is True
+    assert result.thresholds["timestamp_grid"] == 60.0
+    on_grid_rows = range(on_grid_count)
+    assert not _fired(result, "same_instant_burst", on_grid_rows).any()
+    assert not _fired(result, "local_burst", on_grid_rows).any()

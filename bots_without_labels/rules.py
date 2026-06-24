@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .features import BURST_WINDOW_SECONDS, FeatureSet
+from .features import FeatureSet
 from .ingest import Schema
 
 # Evidence strengths.
@@ -162,18 +162,24 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     # a short-window pile-up (`local_burst`) -- assumes the clock is fine enough
     # that within-window co-occurrence reflects genuine simultaneity. When the
     # timestamps are quantised to a grid at least as coarse as the burst window
-    # (e.g. a minute-resolution flow log), a "same instant" is really a wide bin
-    # holding many independent events, so every busy bin trips these rules on
-    # benign volume. We therefore gate both on the measured timestamp resolution
-    # and let the resolution-independent evidence (per-entity monotony, the hub
-    # gate) carry the decision. The cost is that on such logs a bot whose *only*
-    # tell is sub-window timing is unobservable at this grid -- but so is any
-    # genuine burst, so the rules could not separate it from benign traffic
-    # anyway. Resolution unknown (no or degenerate timestamp) leaves them active.
-    resolution = context.timestamp_resolution
-    dense_timing_active = resolution is None or resolution < BURST_WINDOW_SECONDS
-    thresholds["timestamp_resolution"] = resolution
-    thresholds["dense_timing_active"] = dense_timing_active
+    # (e.g. a minute-resolution flow log), an *on-grid* "same instant" is really a
+    # wide bin holding many independent events, so every busy bin would trip these
+    # rules on benign volume. We therefore suppress them *per collision*, only
+    # where the shared timestamp lies on that coarse grid -- a binning artifact.
+    # An *off-grid* pile (e.g. many events at one sub-minute instant the clock did
+    # record precisely) is genuine simultaneity and still fires, so a real burst
+    # injected into a coarse-grid log stays observable. Grid unknown, or a grid
+    # finer than the burst window, leaves the rules fully active.
+    #
+    # Limitation: on a coarse clock an *on-grid* burst is indistinguishable from a
+    # busy bin and is suppressed; mixed-resolution or off-grid clock artefacts can
+    # still surface co-occurrence that warrants review. Resolution-independent
+    # evidence (per-entity monotony, the hub gate) carries the decision elsewhere.
+    grid = context.timestamp_grid
+    on_grid = context.timestamp_on_grid
+    dense_timing_gated = on_grid is not None
+    thresholds["timestamp_grid"] = grid
+    thresholds["dense_timing_gated"] = dense_timing_gated
 
     # Adaptive per-entity diversity cut: the low tail of behavioural diversity
     # among entities with enough volume to baseline, capped by an absolute
@@ -290,7 +296,8 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                     )
                 )
 
-        if dense_timing_active and context.timestamp_count is not None:
+        suppressed = dense_timing_gated and bool(on_grid[row])
+        if not suppressed and context.timestamp_count is not None:
             count = int(context.timestamp_count[row])
             if count >= same_instant_thr:
                 row_hits.append(
@@ -304,7 +311,7 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                     )
                 )
 
-        if dense_timing_active and context.burst_count is not None:
+        if not suppressed and context.burst_count is not None:
             burst = int(context.burst_count[row])
             if burst >= LOCAL_BURST_FLOOR:
                 row_hits.append(
