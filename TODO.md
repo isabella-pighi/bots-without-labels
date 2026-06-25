@@ -17,6 +17,34 @@ on purpose.
 | P2 | Important but less urgent. Improves robustness, stability, or coverage. |
 | P3 | Future-facing. Useful when more data, labels, or external context exist. |
 
+## Next Session (2026-06-25) — after actor-graph shipped
+
+These two follow-ups come out of the CTU-13 fine-resolution work and the
+`asymmetric_degree` actor-graph rule shipped on 2026-06-25 (`2a3f362`). The new
+rule recovers diverse-bot **recall** cleanly (CTU-13 Neris 0.113 → 1.000, 2000/2000
+positives, zero false fires) but two things remain open.
+
+### CTU-13 over-flagging: calibrate the diverse-background false positives (P1)
+
+On CTU-13 (sub-second NetFlow) overall precision is still ~0.041 with a 0.785 flag
+rate: `asymmetric_degree` is clean on its own, but the *other* heuristic rules
+(`numeric_reuse`, concentration, `context_cluster`, `local_burst`) over-flag the
+behaviourally-diverse NetFlow background. This is the real remaining limit for
+diverse-bot data. Diagnose which rules drive the ~78% flag rate on the CTU-13
+split (reuse the `evaluation/rule_diagnostic.py` per-rule counterfactual approach)
+and calibrate them down — mirroring the adaptive-threshold method used for the
+CICIDS timing gate (`e6ded7a`) — **without** regressing CICIDS (0.998 / 0.846) or
+the synthetic suite.
+
+### Prove `asymmetric_degree` generalises beyond Neris (P2)
+
+The recall 1.000 win is **same-family evidence only** (CTU-13 Neris, the family the
+rule was developed against). Validate on a second, independent bot family or
+holdout (another CTU-13 scenario, or IoT-23 `C&C-HeartBeat` — needs Stratosphere
+authorization) before treating connectivity asymmetry as a general diverse-bot
+discriminator. Also assess the flagged benign false-positive risk:
+`asymmetric_degree` can fire on passive fan-in hubs.
+
 ## Next Session (picked up 2026-06-23 PM)
 
 Concrete follow-ups from the real-data evaluation (see `evaluation/FINDINGS.md`).
