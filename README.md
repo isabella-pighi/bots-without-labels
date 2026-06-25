@@ -121,6 +121,44 @@ uv run jupyter lab    # then open notebooks/bots_without_labels.ipynb
 Point `generate`, `run`, or `load(...)` at any CSV/TSV/JSON file. Logs dropped under
 `data/` are gitignored.
 
+## Running against Kaggle or Hugging Face datasets
+
+`run` takes a **local** CSV/TSV/JSON file — there is no built-in dataset fetcher.
+Download the dataset with its own tooling, then point `run --input` at the file.
+
+**Kaggle** (needs the `kaggle` CLI and an API token at `~/.kaggle/kaggle.json`):
+
+```bash
+pip install kaggle
+kaggle datasets download -d tunguz/clickstream-data-for-online-shopping -p data/ --unzip
+uv run --extra eif python -m bots_without_labels.cli run \
+  --input data/<downloaded-file>.csv --output-dir run-output
+```
+
+**Hugging Face** (needs `huggingface_hub`):
+
+```bash
+pip install huggingface_hub
+huggingface-cli download mindweave/web-server-logs --repo-type dataset \
+  --local-dir data/web-server-logs
+uv run --extra eif python -m bots_without_labels.cli run \
+  --input data/web-server-logs/<downloaded-file>.csv --output-dir run-output
+```
+
+If a Hugging Face dataset ships only as Parquet/Arrow, export one split to a
+format the loader reads first:
+
+```bash
+python -c "from datasets import load_dataset; \
+load_dataset('mindweave/web-server-logs', split='train').to_csv('data/web-server-logs.csv')"
+```
+
+The commands work for any CSV/TSV/JSON dataset. Note that these two specific sets
+were used in our real-data evaluation and were **not** fair tests — the Hugging Face
+web logs showed no lift, and the Kaggle clickstream has no labels to measure against
+(see `evaluation/FINDINGS.md`). A fair test needs a rare, externally-labeled attack
+population, which is why the kept benchmarks are CICIDS and CTU-13.
+
 ## What's In Here
 
 | Path | Purpose |
