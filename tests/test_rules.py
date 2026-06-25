@@ -295,3 +295,120 @@ def test_dense_timing_grid_is_robust_to_one_small_gap(tmp_path: Path) -> None:
     on_grid_rows = range(on_grid_count)
     assert not _fired(result, "same_instant_burst", on_grid_rows).any()
     assert not _fired(result, "local_burst", on_grid_rows).any()
+
+
+def _broadcaster_log(path: Path) -> Path:
+    """An asymmetric high-degree source plus benign point-to-point clients."""
+
+    rows = ["src,dst,svc"]
+    for i in range(90):
+        rows.append(f"10.0.0.1,10.9.{i // 256}.{i % 256},smtp")
+    for c in range(60):
+        server = "10.0.0.250" if c % 2 == 0 else "10.0.0.251"
+        for _ in range(12):
+            rows.append(f"10.0.1.{c},{server},https")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def _passive_fanin_log(path: Path) -> Path:
+    """A passive fan-IN hub: many distinct clients reach one server on a monotone
+    service, and the server never appears as a source. The asymmetry is identical
+    in shape to the source-broadcaster (one role high-degree, the other near-zero),
+    only the direction differs -- which the undirected graph cannot tell apart.
+
+    Point-to-point background gives both address columns enough distinct, recurring
+    values to qualify as endpoints (the hub alone would be a single dst value)."""
+
+    rows = ["src,dst,svc"]
+    # Fan-in hub: 60 distinct clients each send 12 flows to one server, one service.
+    for c in range(60):
+        for _ in range(12):
+            rows.append(f"10.0.2.{c},10.0.0.9,smtp")
+    # Background point-to-point: 60 source->dest pairs, 12 flows each, so dst has
+    # >50 distinct recurring values and src is a valid endpoint too.
+    for k in range(60):
+        for _ in range(12):
+            rows.append(f"10.0.3.{k},10.0.4.{k},https")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def test_asymmetric_degree_fires_on_star_only(tmp_path: Path) -> None:
+    path = tmp_path / "bcast.csv"
+    loaded = load(_broadcaster_log(path))
+    fs = build_features(loaded.frame, loaded.schema)
+    result = apply_rules(loaded.frame, loaded.schema, fs)
+
+    src = loaded.frame["src"].astype(str).to_numpy()
+    star_rows = np.where(src == "10.0.0.1")[0]
+    client_rows = np.where(src == "10.0.1.0")[0]
+
+    assert result.thresholds["actor_graph_active"] is True
+    # The high-degree source star carries the rule and clears the cutoff.
+    assert _fired(result, "asymmetric_degree", star_rows).all()
+    assert all(result.scores[row] >= 0.70 for row in star_rows)
+    # Benign point-to-point clients never trigger it.
+    assert not _fired(result, "asymmetric_degree", client_rows).any()
+
+
+def test_asymmetric_degree_fires_on_passive_fanin_hub(tmp_path: Path) -> None:
+    # Chosen semantics (explicit): the rule is direction-agnostic. A passive
+    # fan-IN hub (server reached by many, never a source) is just as asymmetric as
+    # a broadcasting source, so it DOES fire -- but the explanation must NOT claim
+    # it "fans out", since the undirected graph cannot establish direction.
+    loaded = load(_passive_fanin_log(tmp_path / "fanin.csv"))
+    fs = build_features(loaded.frame, loaded.schema)
+    result = apply_rules(loaded.frame, loaded.schema, fs)
+
+    dst = loaded.frame["dst"].astype(str).to_numpy()
+    hub_rows = np.where(dst == "10.0.0.9")[0]
+    assert result.thresholds["actor_graph_active"] is True
+    assert _fired(result, "asymmetric_degree", hub_rows).all()
+    reasons = {
+        hit.reason
+        for row in hub_rows
+        for hit in result.hits[row]
+        if hit.rule_id == "asymmetric_degree"
+    }
+    joined = " ".join(reasons).lower()
+    assert "fan" not in joined and "broadcast" not in joined, reasons
+
+
+def test_asymmetric_degree_dormant_without_endpoints(tmp_path: Path) -> None:
+    # Synthetic click log: no two recurring endpoint columns -> rule dormant.
+    log = generate(n_legit=300, n_bots=40, seed=4)
+    path = tmp_path / "syn.tsv"
+    write_log(path, log.frame)
+    loaded = load(path)
+    fs = build_features(loaded.frame, loaded.schema)
+    result = apply_rules(loaded.frame, loaded.schema, fs)
+
+    assert result.thresholds["actor_graph_active"] is False
+    assert result.thresholds["degree_floor"] is None
+    fired_any = any(
+        hit.rule_id == "asymmetric_degree" for row in result.hits for hit in row
+    )
+    assert not fired_any
+
+
+def test_asymmetric_degree_skips_symmetric_peer() -> None:
+    # A node high in BOTH roles (a server/peer reached as much as it reaches) is
+    # not asymmetric: the order-of-magnitude test must exclude it past the floor.
+    from types import SimpleNamespace
+
+    from bots_without_labels.rules import _asymmetric_endpoint, _degree_floor
+
+    # Two nodes at degree 100: a one-sided star (reverse 0) and a peer (reverse 100).
+    ctx = SimpleNamespace(
+        actor_columns=["src"],
+        actor_degree_by_col={"src": np.array([100.0, 100.0])},
+        actor_reverse_degree_by_col={"src": np.array([0.0, 100.0])},
+        actor_volume_by_col={"src": np.array([100.0, 100.0])},
+        actor_ctx_diversity_by_col={"src": np.array([0.0, 0.0])},
+        actor_node_degrees=[100.0, 100.0],
+    )
+    floor = _degree_floor(ctx)
+    assert floor is not None and floor <= 100.0
+    assert _asymmetric_endpoint(0, ctx, floor) is not None  # one-sided star
+    assert _asymmetric_endpoint(1, ctx, floor) is None  # symmetric peer

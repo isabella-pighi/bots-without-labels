@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from math import log1p
 
 import numpy as np
 import pandas as pd
@@ -48,6 +47,32 @@ ENTITY_MIN_DISTINCT = 10
 """An actor-like column needs at least this many distinct values to baseline."""
 ENTITY_DIVERSITY_BINS = 8
 """Quantile bins applied to numeric columns before per-entity entropy."""
+
+ACTOR_MIN_DISTINCT = 50
+"""An actor endpoint must have more than this many distinct values. A bounded
+categorical vocabulary (region, browser, OS, URL category) has only a handful of
+values -- it never *identifies* an actor -- so requiring a distinct count above
+the loader's own bounded-set cutoff (``ingest.CATEGORICAL_ABS_MAX``) keeps such
+context columns out of the actor graph even when their cardinality ratio is not
+tiny on a small batch."""
+ACTOR_MIN_RATIO = 0.02
+"""Lower cardinality-ratio bound for an actor endpoint column. Above this, a
+column's distinct count scales with the data (it identifies *who* communicates);
+at or below it the column is a high-cardinality-but-bounded vocabulary -- a TCP
+state, a status code -- that is context, not an actor node. Keeps such context
+columns out of the relational actor graph even when they clear the distinct
+floor."""
+ACTOR_MAX_RATIO = 0.5
+"""Upper cardinality-ratio bound for an actor endpoint column. A column whose
+values are mostly unique (a flow id, a per-row key, a composite 5-tuple edge id)
+is an identifier of the *edge/row*, not a recurring actor; excluding it stops a
+near-unique edge id from being mistaken for an endpoint and corrupting degrees."""
+ACTOR_MIN_RECURRING = 2
+"""An actor endpoint must have at least this many values that recur enough
+(``>= ACTOR_MIN_EVENTS`` events) to be baseline-able actors with a history."""
+ACTOR_MIN_EVENTS = 12
+"""Events a value needs to count as a recurring actor (endpoint detection) and to
+qualify for the asymmetric-degree rule. Mirrors ``rules.ENTITY_MIN_EVENTS``."""
 
 GRID_ALIGNMENT_TOLERANCE_SECONDS = 1e-3
 """How close to a grid multiple a timestamp must fall to count as *on-grid*.
@@ -109,6 +134,38 @@ class FeatureContext:
             a high degree is a hub/star (e.g. a C2 fanned to by many hosts); a
             monotonous entity with degree 1 is a single point-to-point channel. It
             is 0 when there is only one entity column (no counterpart to count).
+        actor_columns: Actor *endpoint* columns for the relational graph --
+            recurring high-cardinality token columns that identify who
+            communicates (e.g. the two address columns of a flow). Detected
+            separately from, and more permissively than, :attr:`entity_columns`:
+            an endpoint need not have recurring *median* volume (a capture is full
+            of one-off peers), only a few high-volume actors, so a high-degree star
+            is visible even where the entity-baseline gate finds no monotone
+            entity. Bounded categorical context (protocol/state/region) and
+            near-unique edge ids (flow id) are excluded. Empty unless >= 2
+            endpoints exist.
+
+            Note: the graph is *undirected* in construction -- we cannot tell
+            source from destination role generically without name/schema hints
+            (deliberately avoided). So degrees are per-role counterpart counts, and
+            the asymmetry between a value's two roles, not a true fan-out, is what
+            the rule reads (see :attr:`actor_degree_by_col`).
+        actor_degree_by_col / actor_reverse_degree_by_col: Per-actor-column,
+            per-row degree of the row's endpoint value. ``degree`` is the number of
+            distinct counterparts it connects to *in this column's role*;
+            ``reverse_degree`` is the same value's degree when it appears in the
+            *other* endpoint column(s) -- 0 if it never does. A value whose two
+            roles are highly asymmetric (``degree >> reverse_degree``) is a
+            one-sided star: a source that reaches many peers but is reached by few
+            (a spam/scan/click-fraud broadcaster), *or* a destination reached by
+            many but that reaches few (a passive fan-in hub). The rule fires on the
+            asymmetry; it does not assert which direction it is.
+        actor_volume_by_col: Per-actor-column, per-row event count of the value.
+        actor_ctx_diversity_by_col: Per-actor-column, per-row behavioural
+            diversity of the value's events over *context* columns only (all
+            categoricals/numerics that are NOT actor endpoints). Excluding the
+            counterpart endpoint is what lets a high-degree star -- diverse in
+            counterparts but monotone in *service* -- still read as low-diversity.
         categorical_columns / numeric_columns / text_columns / boolean_columns:
             The columns used, by role.
         timestamp_column: The primary timestamp column, or ``None``.
@@ -131,6 +188,16 @@ class FeatureContext:
     entity_diversity_by_col: dict[str, np.ndarray] = field(default_factory=dict)
     entity_volume_by_col: dict[str, np.ndarray] = field(default_factory=dict)
     entity_degree_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    actor_columns: list[str] = field(default_factory=list)
+    actor_degree_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    actor_reverse_degree_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    actor_volume_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    actor_ctx_diversity_by_col: dict[str, np.ndarray] = field(default_factory=dict)
+    actor_node_degrees: list[float] = field(default_factory=list)
+    """Pooled *per-node* (one per distinct endpoint value, across actor columns)
+    degrees -- the connectivity distribution the adaptive degree floor is a
+    quantile of. Per node, not per row, so a high-volume hub does not dominate
+    the quantile by appearing on thousands of rows."""
     categorical_columns: list[str] = field(default_factory=list)
     numeric_columns: list[str] = field(default_factory=list)
     text_columns: list[str] = field(default_factory=list)
@@ -293,6 +360,29 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         context.entity_volume_by_col = {c: by_col[c][1] for c in entity_cols}
         context.entity_degree_by_col = {c: by_col[c][2] for c in entity_cols}
         add("entity__diversity", diversity, "entity")
+
+    # Relational actor graph. Where >= 2 stable endpoint columns exist, a row's
+    # endpoint is scored by its degree (distinct counterparts in its own role),
+    # its reverse-role degree (the same value's reach in the other role), and its
+    # behavioural diversity over *context* columns only. This surfaces an
+    # asymmetric high-degree star -- a value that connects to many distinct
+    # counterparts in one role while few connect to it in the other, on a monotone
+    # service (a spam/scan/click-fraud source, or a passive fan-in hub) -- which
+    # the diversity-only entity view misses because connecting to many distinct
+    # counterparts reads as high diversity. The construction is undirected, so the
+    # rule reads the role asymmetry, not a true fan-out direction. Kept entirely
+    # separate from the entity baseline so low-dimensional captures are unaffected.
+    actor_cols = _actor_endpoint_columns(frame, schema)
+    if len(actor_cols) >= 2:
+        degree, reverse_degree, vol, ctxdiv, node_degs = _actor_graph(
+            frame, schema, actor_cols
+        )
+        context.actor_columns = actor_cols
+        context.actor_degree_by_col = degree
+        context.actor_reverse_degree_by_col = reverse_degree
+        context.actor_volume_by_col = vol
+        context.actor_ctx_diversity_by_col = ctxdiv
+        context.actor_node_degrees = node_degs
 
     names = list(columns.keys())
     matrix = (
@@ -467,6 +557,149 @@ def _entity_baseline(
         diversity = np.where(update, col_div, diversity)
         volume = np.where(update, col_vol, volume)
     return diversity, volume, by_col
+
+
+def _actor_endpoint_columns(frame: pd.DataFrame, schema: Schema) -> list[str]:
+    """Pick actor *endpoint* columns for the relational actor graph, schema-driven.
+
+    An endpoint identifies *who* communicates: a recurring high-cardinality token
+    column (an address, account, device). It is detected by shape, never by name,
+    and must sit in a cardinality-ratio band that separates it from the two things
+    it is easily confused with:
+
+    * a **bounded categorical vocabulary** (protocol, TCP state, region) -- a low
+      ratio, since its distinct count does not scale with the data. Excluded below
+      :data:`ACTOR_MIN_RATIO` so context columns never become graph nodes;
+    * a **per-row / per-edge identifier** (a flow id, a composite 5-tuple) -- a
+      near-unique ratio. Excluded above :data:`ACTOR_MAX_RATIO`, so an edge id is
+      not mistaken for an endpoint (which would corrupt every degree).
+
+    It must also have at least :data:`ACTOR_MIN_RECURRING` values that recur
+    (``>= ACTOR_MIN_EVENTS`` events), so there are real actors with a history to
+    form hubs -- unlike the entity baseline, the *median* need not recur, so a
+    capture dominated by one-off peers still exposes its few high-volume hubs.
+    """
+
+    out: list[str] = []
+    for col in schema.columns:
+        if col.role not in (Role.CATEGORICAL, Role.TEXT):
+            continue
+        if col.n_unique <= ACTOR_MIN_DISTINCT:
+            continue
+        if not (ACTOR_MIN_RATIO <= col.cardinality_ratio <= ACTOR_MAX_RATIO):
+            continue
+        counts = _stringify(frame[col.name]).value_counts()
+        if int((counts >= ACTOR_MIN_EVENTS).sum()) < ACTOR_MIN_RECURRING:
+            continue
+        out.append(col.name)
+    return out
+
+
+def _actor_graph(
+    frame: pd.DataFrame, schema: Schema, actor_cols: list[str]
+) -> tuple[
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+    list[float],
+]:
+    """Per-row degrees, reverse-role degrees, volume, and context diversity.
+
+    For each endpoint column the per-row arrays give the value's degree
+    (``degree``: distinct counterparts across the *other* endpoint columns in this
+    role), its reverse-role degree (``reverse_degree``: the same value's degree when
+    it appears in another endpoint column -- 0 if it never does), its event count
+    (``volume``), and its behavioural diversity over *context* columns only
+    (``ctxdiv``: all categoricals/numerics that are not endpoints). The graph is
+    undirected, so ``degree``/``reverse_degree`` are the value's two role-counts,
+    not a true out/in direction. Excluding the counterpart endpoint from the
+    diversity is deliberate: a high-degree star connecting to many distinct
+    counterparts is *diverse* in counterpart but *monotone* in service, and only a
+    context-only diversity sees that monotony.
+    """
+
+    n_rows = int(frame.shape[0])
+    values = {col: _stringify(frame[col]).to_numpy() for col in actor_cols}
+    context_cols = [
+        c for c in schema.columns_with_role(Role.CATEGORICAL) if c not in actor_cols
+    ] + schema.columns_with_role(Role.NUMERIC)
+    context_arrays = _binned_context(frame, schema, context_cols)
+
+    # Per-column value -> degree, so the reverse role can be looked up across
+    # columns for the same value.
+    degree_map: dict[str, dict[object, int]] = {}
+    members_by_col: dict[str, dict[object, list[int]]] = {}
+    for col in actor_cols:
+        others = [o for o in actor_cols if o != col]
+        members: dict[object, list[int]] = defaultdict(list)
+        for index in range(n_rows):
+            members[values[col][index]].append(index)
+        members_by_col[col] = members
+        degree: dict[object, int] = {}
+        for key, idx in members.items():
+            counterparts: set[object] = set()
+            for other in others:
+                counterparts.update(values[other][idx].tolist())
+            counterparts.discard(key)
+            degree[key] = len(counterparts)
+        degree_map[col] = degree
+
+    degree_out: dict[str, np.ndarray] = {}
+    reverse_out: dict[str, np.ndarray] = {}
+    vol: dict[str, np.ndarray] = {}
+    ctxdiv: dict[str, np.ndarray] = {}
+    for col in actor_cols:
+        others = [o for o in actor_cols if o != col]
+        members = members_by_col[col]
+        per_degree = np.zeros(n_rows, dtype=float)
+        per_reverse = np.zeros(n_rows, dtype=float)
+        per_vol = np.zeros(n_rows, dtype=float)
+        per_div = np.ones(n_rows, dtype=float)
+        for key, idx in members.items():
+            idx_arr = np.array(idx)
+            role_degree = degree_map[col][key]
+            reverse_degree = max(
+                (degree_map[o].get(key, 0) for o in others), default=0
+            )
+            diversity = (
+                1.0
+                if (len(idx) < 2 or not context_arrays)
+                else float(np.mean([_norm_entropy(c[idx_arr]) for c in context_arrays]))
+            )
+            per_degree[idx_arr] = role_degree
+            per_reverse[idx_arr] = reverse_degree
+            per_vol[idx_arr] = len(idx)
+            per_div[idx_arr] = diversity
+        degree_out[col] = per_degree
+        reverse_out[col] = per_reverse
+        vol[col] = per_vol
+        ctxdiv[col] = per_div
+    node_degs = [
+        float(degree) for col in actor_cols for degree in degree_map[col].values()
+    ]
+    return degree_out, reverse_out, vol, ctxdiv, node_degs
+
+
+def _binned_context(
+    frame: pd.DataFrame, schema: Schema, context_cols: list[str]
+) -> list[np.ndarray]:
+    """Context columns as label arrays (numerics quantile-binned), for entropy."""
+
+    out: list[np.ndarray] = []
+    for name in context_cols:
+        if schema.role_of(name) == Role.NUMERIC:
+            num = pd.to_numeric(frame[name], errors="coerce")
+            binned = pd.qcut(
+                num.rank(method="first"),
+                q=ENTITY_DIVERSITY_BINS,
+                labels=False,
+                duplicates="drop",
+            )
+            out.append(binned.fillna(-1).to_numpy())
+        else:
+            out.append(_stringify(frame[name]).to_numpy())
+    return out
 
 
 def _norm_entropy(values: np.ndarray) -> float:

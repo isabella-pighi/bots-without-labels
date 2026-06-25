@@ -4,21 +4,33 @@ The CTU-13 binetflow is gitignored and large, so this test is *skipped* unless
 the flow file is present locally (download instructions in
 :mod:`evaluation.ctu13_bot_benchmark`).
 
-What it guards is the benchmark's *premise and plumbing*, not a detection target.
-Unlike the CICIDS guard -- which pins recall/precision wins -- the documented,
-honest finding here is that sub-second timestamp resolution *alone* does not make
-the method recover on this different traffic population: on the Neris mix the
-detector over-flags the diverse NetFlow background and misses the bot (observed
-at the pinned config: flag rate ~0.76, recall ~0.11, precision ~0.005). We
-therefore do NOT assert detection quality (that would lock in a known method
-limit as if it were a goal). We DO assert the things the benchmark exists to
-establish and rely on:
+What it guards now has two parts.
 
-* the mix is the intended rare-attack shape (~3% base rate), and
+The original finding stands: sub-second timestamp resolution *alone* did not make
+the method recover -- the diverse Neris bot (spam + C2 + click fraud) connects to
+many destinations, so it reads as *high* diversity and the monotony/concentration
+rules missed it (recall ~0.11). The actor-graph rule (``asymmetric_degree``)
+closes that gap: a value that connects to an unusually large number of distinct
+counterparts in one role while few connect to it in the other, on a monotone
+service, is the one-sided star this bot draws. With it the bot is fully recovered,
+so we now pin the **recall** win.
+
+We still do NOT assert overall precision. On this capture it stays low because a
+*separate*, pre-existing rule (``entity_monotony`` firing on the degenerate
+``Proto``/``State`` "entities") over-flags the NetFlow background. A per-rule
+diagnostic (measured on this constructed split) shows ``asymmetric_degree`` fires
+on all recovered positives with zero false fires (1.0 fire-precision) and uniquely
+carries 1,774 of the 2,000 positives -- the other 226 also have other evidence.
+Fixing that other rule is tracked separately, so pinning overall precision here
+would lock in an unrelated limit.
+
+So this guards:
+
+* the mix is the intended rare-attack shape (~3% base rate);
 * the timestamps are genuinely sub-second, so the dense-timing rules stay ACTIVE
-  (``dense_timing_gated`` is False) -- the exact opposite of the minute-quantised
-  CICIDS case. This is the data-limit-vs-method-limit contrast the benchmark was
-  built to make.
+  (``dense_timing_gated`` is False) -- the opposite of the minute-quantised CICIDS
+  case; and
+* the actor-graph rule recovers the diverse directional bot (recall >= 0.95).
 """
 
 from __future__ import annotations
@@ -52,6 +64,9 @@ def test_ctu13_mix_is_fine_resolution_rare_attack() -> None:
     assert grid < 1.0, report  # sub-second; CICIDS is 60.0
     assert report["dense_timing_gated"] is False, report
 
-    # Metrics are well-formed (no assertion on their level -- see module docstring).
+    # The actor-graph rule recovers the diverse directional bot. We pin recall
+    # (the win) but not overall precision -- a separate rule's over-flagging caps
+    # it on this capture; see the module docstring.
+    assert report["recall"] >= 0.95, report
     for key in ("recall", "planted_precision", "flag_rate"):
         assert 0.0 <= report[key] <= 1.0, report

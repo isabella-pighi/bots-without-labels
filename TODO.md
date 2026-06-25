@@ -138,6 +138,13 @@ identifiers to surface coordinated behaviour that per-event signals miss
 (shared-identifier fan-out, connected-component size, repeated edges). Keep it
 optional and disabled when no stable identifier is present.
 
+*Status (branch `agent/actor-graph`): partly delivered.* Two graph signals now
+exist — the relational hub gate on `entity_monotony` (fan-in stars) and the
+direction-agnostic `asymmetric_degree` rule on an undirected actor-endpoint graph
+(asymmetric high-degree stars), both dormant when no stable endpoint columns are
+present. See `evaluation/FINDINGS.md`. Still open: connected-component size,
+repeated-edge weighting, and validation on a second labelled family.
+
 ### 10. Labelled validation and cost-sensitive thresholds
 
 With trusted labels, the system can move from operational confidence to measured

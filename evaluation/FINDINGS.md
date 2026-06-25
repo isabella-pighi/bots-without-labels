@@ -7,7 +7,7 @@ data, what failed, and what changed.
 
 ## What we ran
 
-Three external sources plus a constructed, fair real-data benchmark:
+Three exploratory external sources plus two constructed, fair real-data benchmarks:
 
 | Source | Dataset | Result |
 |---|---|---|
@@ -15,11 +15,23 @@ Three external sources plus a constructed, fair real-data benchmark:
 | Kaggle | `tunguz/clickstream-data-for-online-shopping` | no labels; surfaced over-long sessions only |
 | Local zip | CICIDS2017 PortScan flows | attacks were 55% of the sample → not anomalous |
 | **Benchmark** | **CICIDS2017 Friday-morning botnet (Ares)** | **see below** |
+| **Benchmark** | **CTU-13 scenario 1 (Neris)** | **see below** |
 
 The first three were not fair tests: bots were either the majority, unlabelled,
-or the timestamps too coarse for the timing rules. The botnet capture is the
-method's *ideal* target — rare (~1%), temporally dense, structurally distinct,
-externally labelled — so it is the benchmark we kept (`cicids_bot_benchmark.py`).
+or the timestamps too coarse for the timing rules. We kept two externally
+labelled botnet captures, each a rare-attack (~1–3%) target the method is *meant*
+to handle, but chosen to contrast on opposite axes:
+
+- **CICIDS2017 Friday-morning** (`cicids_bot_benchmark.py`) is minute-quantised
+  *at source*, so the sub-second timing rules have nothing to work with — and the
+  bot is a **passive fan-in star** (many hosts beacon one C2).
+- **CTU-13 scenario 1** (`ctu13_bot_benchmark.py`) is an Argus NetFlow capture
+  with **microsecond** timestamps, and the bot is the opposite shape — one host
+  *reaching out* to many destinations (spam + C2 + click fraud).
+
+Together they separate a **data limit** (CICIDS lacks timing resolution) from a
+**method limit** (CTU-13 has the resolution, yet timing alone still missed the
+bot — see the third discriminator below).
 
 ## The failure
 
@@ -91,27 +103,38 @@ single-identifier and low-dimensional logs are unaffected. See
 `_hub_entity` in `rules.py`.
 
 On the same CICIDS benchmark (n = 61,966 rows, base rate 0.032), the discriminator
-lifts measured precision roughly threefold and more than halves the flag rate,
-with no loss of recall:
+lifted precision roughly threefold and more than halved the flag rate with no loss
+of recall; subsequent timing calibration on this branch lifted it further. The
+last row is the **current** branch output; the middle two are historical
+intermediate stages, kept to show the progression:
 
 | Stage | recall | precision | flag rate |
 |---|---|---|---|
 | Pre-fix (global concentration capped) | 0.022 | 0.018 | — |
 | Per-entity diversity baseline | 0.998 | 0.144 | 0.219 |
-| **+ relational hub discriminator** | **0.998** | **0.441** | **0.072** |
+| + relational hub discriminator (historical) | 0.998 | 0.441 | 0.072 |
+| **+ later timing calibration (current branch)** | **0.998** | **0.846** | **0.037** |
+
+The last row reproduces today with
+`uv run --extra eif python -m evaluation.cicids_bot_benchmark --zip data/GeneratedLabelledFlows.zip`.
+The new `asymmetric_degree` rule does **not** fire on CICIDS: the actor graph
+builds (`Source IP` / `Destination IP` endpoints, degree floor ≈ 551), but no row
+clears the combined asymmetry/floor/monotony gate, so the CICIDS result and its
+no-regression are **not** credited to the new actor rule — they come from the
+timing calibration.
 
 ## The honest ceiling
 
-Precision 0.441 is a measured number on *this* labelled capture — it is not a
-production guarantee, and not proof that any flagged row is fraud. Four caveats
-keep it honest:
+Precision 0.846 is the current measured number on *this* labelled capture — it is
+not a production guarantee, and not proof that any flagged row is fraud. Four
+caveats keep it honest:
 
 - **It is anomaly-style evidence, not a fraud verdict.** The method is
   unsupervised; in production it ranks structurally unusual entities, and a hub
   flag means "monotone fan-in star", not "confirmed bot". The benchmark can
   measure precision only because CICIDS ships labels; the running system cannot.
 - **It is one attack family and one hub.** The lift leans on a single, uniquely
-  separable C2 (`205.174.165.73`). We did not tune `K` to it, but a 0.441 figure
+  separable C2 (`205.174.165.73`). We did not tune `K` to it, but a 0.846 figure
   from one capture must not be read as a general precision, nor as evidence that
   `K = 3` is universally correct.
 - **Benign monotone hubs remain a plausible risk for the `entity_monotony`
@@ -120,16 +143,17 @@ keep it honest:
   narrows this risk; it does not eliminate it. Where timestamp resolution allows,
   sub-minute timing cadence is the next discriminator to separate a beacon from a
   busy benign hub.
-- **The overall 0.441 is not the hub gate's precision, and the residual error is
-  not the hub gate's fault.** Precision 0.441 means 55.9% of *all* flagged rows
-  are not labelled bot in this capture — but that is the detector as a whole, not
-  the hub rule. A checked per-rule diagnostic on this benchmark (4,451 flags;
-  2,489 false positives) shows `entity_monotony` fired on 2,067 rows with only
-  105 false positives — ~0.95 precision, and it accounts for *all* 1,962
-  true-positive catches. It contributes ~4% of the residual false positives; the
-  other ~96% come from the detector's other rules. So the residual error here is
-  *not* dominated by benign monotone hubs; the headline 0.441 is dragged down by
-  other rules flagging benign traffic, a separate calibration question.
+- **The headline 0.846 is the whole detector, not the hub gate, and the residual
+  error is mostly not heuristic.** Precision 0.846 means 15.4% of *all* flagged
+  rows are not labelled bot in this capture — but that is the detector as a whole.
+  A checked per-rule diagnostic on this branch (2,320 flags; 358 false positives)
+  shows `entity_monotony` fired on 2,067 rows with ~104 false positives
+  (fire-precision 0.949) and carries 1,938 of the 1,962 true-positive catches. Of
+  the 358 false positives, ~253 come from the ML/EIF scorer alone (ML-only flags,
+  attributable to no heuristic rule) and ~104 from `entity_monotony`; the other
+  heuristic rules contribute essentially none. So the residual error is *not*
+  dominated by benign monotone hubs — most of it is the ML path, a separate
+  calibration question.
 
 Two further limits are tracked as follow-ups, not fixed on this branch:
 
@@ -142,12 +166,143 @@ Two further limits are tracked as follow-ups, not fixed on this branch:
   every actor looks monotonous, carrying no signal), via an absolute diversity
   ceiling. That is why the synthetic suite is unaffected.
 
+## The third discriminator: asymmetric endpoint degree (CTU-13 / Neris)
+
+The two CICIDS discriminators above handle a *passive fan-in star*: one C2 that
+many monotone hosts beacon to. CTU-13 scenario 1 is the opposite shape, and the
+one those rules miss. A single infected host (`147.32.84.165`) runs the Neris
+botnet — spam, command-and-control, and click fraud — so it *reaches out to many
+distinct destinations*. Connecting to many counterparts reads as **high**
+behavioural diversity, so both the monotony rule and the diversity-gated hub rule
+walk straight past it. On the fine-resolution CTU-13 mix the detector *before*
+this work scored:
+
+```
+recall 0.1130   precision 0.0048   flag rate 0.7568   (base rate 0.032)
+```
+
+This was the documented **method limit**: sub-second timestamps alone — the thing
+CICIDS lacked — did not recover the bot. The missing signal is neither timing nor
+monotony; it is the **directional asymmetry of connectivity**.
+
+### What shipped — and what it is not
+
+The candidate began as a `directional_fanout` rule, but was deliberately reframed.
+A schema-generic detector *cannot reliably tell a source column from a destination
+column* without name or schema hints, and inferring direction from column names is
+a coupling we have intentionally avoided throughout. So the shipped rule is
+**direction-agnostic**: `asymmetric_degree`. It does **not** assert which way the
+traffic flows.
+
+It builds an **undirected relational actor graph** when the log exposes stable
+actor-endpoint columns, and stays dormant when it does not (so low-dimensional
+logs and the synthetic suite are unaffected):
+
+- **Endpoint columns are chosen by shape, never by name** (`_actor_endpoint_columns`
+  in `features.py`): a recurring, high-cardinality token column whose
+  cardinality ratio sits in a band (`ACTOR_MIN_RATIO` = 0.02 to
+  `ACTOR_MAX_RATIO` = 0.5). The band separates a genuine actor (an address, an
+  account) from the two things it is confused with — a *bounded categorical*
+  below the band (protocol, TCP state, region) and a *per-row edge identifier*
+  above it (a flow id, a composite 5-tuple). This is what keeps **actor-endpoint
+  columns separate from bounded context columns**.
+- For each row's endpoint the graph records its **degree** (distinct counterparts
+  in its own role), its **reverse-role degree** (the same value's degree when it
+  appears in the *other* endpoint column — 0 if it never does), its volume, and
+  its diversity over **context columns only** — excluding the counterpart
+  endpoint, so a star that is diverse *in counterparts* but monotone *in service*
+  still reads as low diversity.
+- The `asymmetric_degree` rule (strong, weight 0.70) fires on a high-volume
+  endpoint whose degree exceeds an **adaptive floor** (the 99th-percentile of the
+  batch's own hub-subset degrees, `DEGREE_FLOOR_PERCENTILE`), **and** exceeds its
+  reverse-role degree by an order of magnitude (`DEGREE_ASYMMETRY` = 10), **and**
+  is monotone in service. Because the graph is undirected, this reads the
+  *asymmetry between a value's two roles*, not a verified fan-out — so it covers
+  both a broadcasting source (spam/scan/click-fraud) **and** a passive fan-in hub.
+
+### Result
+
+| Stage | recall | precision | flag rate |
+|---|---|---|---|
+| Before (timing/monotony only) | 0.113 | 0.005 | 0.757 |
+| **+ asymmetric_degree** | **1.000** | **0.041** | **0.785** |
+
+Reproduce with `uv run --extra eif python -m evaluation.ctu13_bot_benchmark`
+(n = 62,000 rows, base rate 0.032, microsecond timestamps, dense-timing rules
+*active*). A per-rule diagnostic on this constructed split shows `asymmetric_degree`
+fires on **2,000 of 2,000** positives with **zero** false fires, and *uniquely*
+carries **1,774** of them (the other 226 also trip another rule). On this split it
+is a clean catch.
+
+### The honest ceiling (CTU-13)
+
+Read this as *hypothesis-supporting evidence within one botnet family*, not a
+solved problem:
+
+- **Same-family evidence only.** Recall 1.0000 is on CTU-13 / Neris — the same
+  family the rule was developed against. It supports the hypothesis that
+  connectivity asymmetry recovers a diverse directional bot; it is **not** a
+  general solution, nor proof that recall recovers on unseen families. A second
+  labelled family or scenario remains future validation.
+- **Overall precision is still low (0.0411) — and not the new rule's doing.** The
+  new rule fires cleanly; the low precision comes from *pre-existing broad rules*
+  over-flagging the diverse NetFlow background (notably `entity_monotony` on the
+  degenerate `Proto`/`State` columns). That is a separate calibration question,
+  tracked, not introduced here. Pinning overall precision on this capture would
+  lock in an unrelated limit.
+- **Passive fan-in hubs fire by design.** Because the rule is direction-agnostic,
+  a benign monotone server, DNS resolver, NTP source, or load balancer — a real
+  one-sided star — is an **explicit false-positive risk**. Degree asymmetry
+  narrows it; it does not eliminate it. Sub-minute timing cadence is the natural
+  next discriminator where resolution allows.
+- **The constants are limited-evidence guardrails, not universal constants.**
+  `DEGREE_ASYMMETRY` = 10 and the 99th-percentile floor hold for asymmetry factors
+  ≈ 10–100 on this one split plus a synthetic broadcaster; the rule over-fires
+  below ≈ 10 and vanishes at ≥ 200 (beyond Neris's own ratio). They are *not*
+  scale-free, and should not be read as tuned constants for other captures.
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was
 calibration plus a missing per-entity view, and a benchmark that never tested
-reality. The per-entity baseline recovered the bots; the relational hub gate then
-removed the busy-benign point-to-point channels that diversity alone could not
-distinguish. `tests/test_real_benchmark.py` now pins both stacked wins (recall
-≥ 0.95, precision ≥ 0.35, flag rate ≤ 0.12) so a future change that silently
-reintroduces the real-data blind spot fails even with the synthetic suite green.
+reality. The per-entity baseline recovered the passive fan-in bots; the relational
+hub gate removed the busy-benign point-to-point channels that diversity alone could
+not distinguish; and the undirected actor graph (`asymmetric_degree`) added the one
+shape both missed — a diverse, high-degree endpoint that is asymmetric in its
+connectivity. `tests/test_real_benchmark.py` pins the CICIDS stacked wins (recall
+≥ 0.95, precision ≥ 0.35, flag rate ≤ 0.12); `tests/test_ctu13_benchmark.py` pins
+the CTU-13 recall win (≥ 0.95) but deliberately *not* overall precision, since that
+is capped by a separate rule. Both guards mean a future change that silently
+reintroduces a real-data blind spot fails even with the synthetic suite green.
+
+## References
+
+The pattern `asymmetric_degree` keys on — a node whose degree is anomalously high
+and asymmetric relative to its neighbourhood — is the classic **near-star** graph
+outlier, long established in graph- and flow-anomaly research:
+
+- **CTU-13 dataset.** S. Garcia, M. Grill, J. Stiborek, A. Zunino, "An empirical
+  comparison of botnet detection methods," *Computers & Security* 45 (2014)
+  100–123. (Cited in `evaluation/ctu13_bot_benchmark.py`; licence CC-BY.)
+- **OddBall — degree/star egonet anomalies.** L. Akoglu, M. McGlohon, C.
+  Faloutsos, "OddBall: Spotting Anomalies in Weighted Graphs," *PAKDD 2010*, LNCS
+  6119, pp. 410–421. Establishes that a node's degree, weight, and neighbourhood
+  follow predictable power laws, and that *near-star* nodes — high degree, sparse
+  interconnection among neighbours — are a canonical structural anomaly.
+- **Survey of graph anomaly detection.** L. Akoglu, H. Tong, D. Koutra,
+  "Graph based anomaly detection and description: a survey," *Data Mining and
+  Knowledge Discovery* 29(3) (2015) 626–688, DOI 10.1007/s10618-014-0365-y. Frames
+  star/near-star and degree-distribution outliers as a primary structural-anomaly
+  class.
+- **Botnet communication structure.** G. Gu, R. Perdisci, J. Zhang, W. Lee,
+  "BotMiner: Clustering Analysis of Network Traffic for Protocol- and
+  Structure-Independent Botnet Detection," *USENIX Security 2008*, pp. 139–154.
+  Establishes that botnets are separable by their *communication structure* —
+  who-talks-to-whom — independent of protocol or payload, which is the premise the
+  actor graph operationalises.
+
+*Sourcing note:* the three external graph/botnet references were verified by web
+search on 2026-06-24 against dblp, Springer, and the USENIX proceedings; the
+CTU-13 citation is taken from the repository's own benchmark module. No claim here
+should be read as a fraud verdict — these works ground an *anomaly* signal, not a
+ground-truth label.

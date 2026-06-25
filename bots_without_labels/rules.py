@@ -73,6 +73,34 @@ ENTITY_DIVERSITY_PERCENTILE = 0.10
 # it toward a specific botnet's observed fan-out would be overfitting.
 MIN_HUB_DEGREE = 3
 
+# Asymmetric high-degree endpoint: a value that connects to an unusually large
+# number of distinct counterparts in one role while very few connect to it in the
+# other role, on a monotone service. The graph is built undirected (we do not
+# infer which endpoint column is "source" without name/schema hints, deliberately
+# avoided), so this reads the *asymmetry between a value's two roles*, not a true
+# fan-out direction. It thus covers both a source that reaches many peers (a
+# spam/scan/click-fraud broadcaster) and a destination reached by many (a passive
+# fan-in hub). It complements the entity hub rule, which keys on low overall
+# diversity; this one fires even when overall diversity is high, because
+# connecting to many distinct counterparts inflates that diversity -- the
+# behaviour a diverse directional bot draws and the entity view misses. Strong,
+# like entity monotony.
+W_ASYMMETRIC_DEGREE = 0.70
+# The degree floor is data-relative, not a fixed magic count: the upper-tail
+# quantile of the *hub-subset* degrees (endpoints already reaching at least
+# MIN_HUB_DEGREE counterparts), so the cut tracks the batch's own connectivity
+# rather than a number tuned to one capture. The asymmetry factor requires the
+# heavy-degree role to exceed the reverse role by an order of magnitude.
+#
+# These two are GUARDRAILS calibrated against limited evidence, NOT established
+# general constants. On the one labelled split tested (CTU-13 / Neris) plus a
+# synthetic broadcaster, the result is unchanged for asymmetry factors ~10-100,
+# over-fires below ~10, and the rule disappears at >=200 (it exceeds Neris's own
+# ratio). Generality to other families/scenarios is unproven and is a tracked
+# follow-up; do not read these as scale-free.
+DEGREE_FLOOR_PERCENTILE = 0.99
+DEGREE_ASYMMETRY = 10
+
 # Adaptive-threshold guardrails.
 COUNT_PERCENTILE = 0.99
 TEXT_REPEAT_FLOOR = 10
@@ -212,6 +240,21 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     entity_value_arrays = {
         col: frame[col].astype("string").fillna("").to_numpy()
         for col in context.entity_columns
+    }
+
+    # Adaptive degree floor: the upper-tail quantile of degrees among endpoints
+    # that are already hubs (>= MIN_HUB_DEGREE counterparts), so the cut is relative
+    # to the batch's connectivity, not a fixed count.
+    actor_graph_active = len(context.actor_columns) >= 2 and bool(
+        context.actor_degree_by_col
+    )
+    degree_floor = _degree_floor(context) if actor_graph_active else None
+    thresholds["actor_columns"] = context.actor_columns
+    thresholds["actor_graph_active"] = actor_graph_active
+    thresholds["degree_floor"] = degree_floor
+    actor_value_arrays = {
+        col: frame[col].astype("string").fillna("").to_numpy()
+        for col in context.actor_columns
     }
 
     entropy = _entropy_lookup(feature_set)
@@ -375,6 +418,25 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                     )
                 )
 
+        if actor_graph_active and degree_floor is not None:
+            star = _asymmetric_endpoint(row, context, degree_floor)
+            if star is not None:
+                col, degree, reverse, diversity, volume = star
+                value = actor_value_arrays[col][row]
+                row_hits.append(
+                    _hit(
+                        "asymmetric_degree",
+                        "asymmetric high-degree endpoint",
+                        f"{col} '{value}' connects to {degree} distinct counterparts "
+                        f"in one role while only {reverse} connect to it in the "
+                        f"other, on a monotone service "
+                        f"(context diversity {diversity:.2f} over {volume} events)",
+                        W_ASYMMETRIC_DEGREE,
+                        STRONG,
+                        "actor",
+                    )
+                )
+
         scores[row] = _cap_and_sum(row_hits)
         hits.append(row_hits)
 
@@ -419,6 +481,63 @@ def _hub_entity(
                     int(volume[row]),
                     deg,
                 )
+    return best
+
+
+def _degree_floor(context) -> float | None:
+    """Adaptive degree cut: upper-tail quantile of hub-subset degrees.
+
+    Takes the *per-node* degrees (one per distinct endpoint value, so a
+    high-volume hub does not dominate by recurring on many rows), keeps those
+    already hubs (``>= MIN_HUB_DEGREE``), and returns the
+    :data:`DEGREE_FLOOR_PERCENTILE` quantile -- the connectivity an endpoint must
+    exceed to be an unusually high degree for *this* batch. ``None`` when no
+    endpoint reaches the structural hub minimum (no star to speak of).
+    """
+
+    hub = [value for value in context.actor_node_degrees if value >= MIN_HUB_DEGREE]
+    if not hub:
+        return None
+    return float(np.quantile(hub, DEGREE_FLOOR_PERCENTILE))
+
+
+def _asymmetric_endpoint(
+    row: int, context, degree_floor: float
+) -> tuple[str, int, int, float, int] | None:
+    """Return the row's asymmetric high-degree endpoint, or ``None``.
+
+    A qualifying endpoint is, in some actor column, high-volume
+    (``>= ENTITY_MIN_EVENTS``), an unusually high degree
+    (``degree >= degree_floor``), strongly *asymmetric* between its two roles
+    (``degree >= DEGREE_ASYMMETRY * (reverse_degree + 1)`` -- it connects to an
+    order of magnitude more counterparts in this role than connect to it in the
+    other), and monotone in service (context-only diversity
+    ``<= ENTITY_DIVERSITY_CEILING``). The graph is undirected, so this is a
+    one-sided star in either direction (a broadcasting source or a passive fan-in
+    hub), not a verified fan-out. When several columns qualify, the highest degree
+    is chosen.
+
+    Returns ``(column, degree, reverse_degree, diversity, volume)``.
+    """
+
+    best: tuple[str, int, int, float, int] | None = None
+    for col in context.actor_columns:
+        deg = context.actor_degree_by_col.get(col)
+        rev = context.actor_reverse_degree_by_col.get(col)
+        vol = context.actor_volume_by_col.get(col)
+        div = context.actor_ctx_diversity_by_col.get(col)
+        if deg is None or rev is None or vol is None or div is None:
+            continue
+        degree = int(deg[row])
+        reverse = int(rev[row])
+        if (
+            vol[row] >= ENTITY_MIN_EVENTS
+            and degree >= degree_floor
+            and degree >= DEGREE_ASYMMETRY * (reverse + 1)
+            and div[row] <= ENTITY_DIVERSITY_CEILING
+        ):
+            if best is None or degree > best[1]:
+                best = (col, degree, reverse, float(div[row]), int(vol[row]))
     return best
 
 

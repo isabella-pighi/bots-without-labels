@@ -175,3 +175,67 @@ def test_minimal_log_without_timestamp_or_categoricals(tmp_path: Path) -> None:
     assert "context__conc" not in fs.names  # fewer than two categoricals
     assert fs.context.timestamp_column is None
     assert fs.matrix.shape == (40, len(fs.names))
+
+
+def _broadcaster_log(path: Path) -> Path:
+    """A flow-like CSV with an asymmetric high-degree source endpoint.
+
+    ``10.0.0.1`` connects to 90 distinct destinations on one service (a spam/scan
+    shape) while never appearing as a destination; benign clients each talk only
+    to one of two busy servers. The two address columns are recurring
+    high-cardinality endpoints; ``svc`` is a bounded categorical context (not an
+    actor node).
+    """
+
+    header = "src,dst,svc"
+    rows = [header]
+    # Broadcaster: one source -> 90 distinct destinations, one service.
+    for i in range(90):
+        rows.append(f"10.0.0.1,10.9.{i // 256}.{i % 256},smtp")
+    # Benign clients: 60 clients, each 12 flows to one of two servers. Enough
+    # distinct sources/destinations that the address columns clear the actor
+    # endpoint distinct floor.
+    for c in range(60):
+        server = "10.0.0.250" if c % 2 == 0 else "10.0.0.251"
+        for _ in range(12):
+            rows.append(f"10.0.1.{c},{server},https")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def test_actor_endpoints_detected_excluding_context(tmp_path: Path) -> None:
+    log = load(_broadcaster_log(tmp_path / "bcast.csv"))
+    fs = build_features(log.frame, log.schema)
+
+    # The two address columns are actor endpoints; the bounded service vocabulary
+    # is context, never an actor node.
+    assert fs.context.actor_columns == ["src", "dst"]
+    assert "svc" not in fs.context.actor_columns
+
+
+def test_actor_graph_role_degrees(tmp_path: Path) -> None:
+    log = load(_broadcaster_log(tmp_path / "bcast.csv"))
+    fs = build_features(log.frame, log.schema)
+    ctx = fs.context
+    src = log.frame["src"].astype(str).to_numpy()
+
+    bot_rows = np.where(src == "10.0.0.1")[0]
+    client_rows = np.where(src == "10.0.1.0")[0]
+
+    # Source star: degree 90 in its role, reached by none in the reverse role,
+    # monotone service.
+    assert float(ctx.actor_degree_by_col["src"][bot_rows][0]) == 90.0
+    assert float(ctx.actor_reverse_degree_by_col["src"][bot_rows][0]) == 0.0
+    assert float(ctx.actor_ctx_diversity_by_col["src"][bot_rows][0]) == 0.0
+    # Benign client: talks to a single server (point-to-point degree of 1).
+    assert float(ctx.actor_degree_by_col["src"][client_rows][0]) == 1.0
+
+
+def test_actor_graph_dormant_on_click_log(tmp_path: Path) -> None:
+    # A click log has no two recurring high-cardinality endpoint columns, so the
+    # actor graph stays dormant (region/browser are bounded context; query is
+    # near-unique free text).
+    log = load(_write_click_log(tmp_path / "clicks.csv"))
+    fs = build_features(log.frame, log.schema)
+    assert len(fs.context.actor_columns) < 2
+    assert fs.context.actor_degree_by_col == {}
