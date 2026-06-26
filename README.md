@@ -178,6 +178,21 @@ population, which is why the kept benchmarks are CICIDS and CTU-13.
 product manager, a pair of machine-learning engineers, and a pair of data scientists
 who critique each other's work — with the prompts and principles that drive it.
 
+## Data sources and credits
+
+The real-data benchmarks use externally-labeled datasets that must be cited:
+
+- **CICIDS2017** — Canadian Institute for Cybersecurity (CIC), University of New
+  Brunswick. <https://www.unb.ca/cic/datasets/ids-2017.html>. Cite: Iman Sharafaldin,
+  Arash Habibi Lashkari, and Ali A. Ghorbani, "Toward Generating a New Intrusion
+  Detection Dataset and Intrusion Traffic Characterization," *4th International
+  Conference on Information Systems Security and Privacy (ICISSP)*, 2018.
+- **CTU-13** — Stratosphere Laboratory, CTU University, Czech Republic (CC-BY).
+  Cite: S. García, M. Grill, J. Stiborek, A. Zunino, "An empirical comparison of
+  botnet detection methods," *Computers & Security* 45 (2014) 100–123.
+
+Dataset files are not redistributed here; download them from the sources above.
+
 ## Licence
 
 See [LICENSE](LICENSE).
