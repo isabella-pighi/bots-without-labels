@@ -72,10 +72,11 @@ BENCHMARKS: tuple[Benchmark, ...] = (
         absent_reason=f"{ctu13_bot_benchmark.DEFAULT_BINETFLOW} absent",
         run=ctu13_bot_benchmark.run,
         caveat=(
-            "recall is the tracked win; LOW overall precision is NOT the "
-            "actor rule -- asymmetric_degree is clean (2000/2000, zero false "
-            "fires); a separate rule over-flags the NetFlow background. "
-            "Precision is not pinned."
+            "asymmetric_degree carries recall cleanly (2000/2000, zero false "
+            "fires); actor-band entity gating fixed the prior entity_monotony "
+            "over-flagging on the degenerate Proto/State columns. Verified "
+            "precision 0.978 / recall 1.000 / flag 0.033 on this one Neris "
+            "scenario -- a measured result here, not a general precision."
         ),
     ),
     Benchmark(
@@ -86,9 +87,12 @@ BENCHMARKS: tuple[Benchmark, ...] = (
         absent_reason="raw shards data/UNSW-NB15_1..4.csv absent",
         run=unsw_benchmark.run,
         caveat=(
-            "broad IDS, NOT a botnet capture -- secondary breadth check "
-            "only, not a tracked bot result. Low recall / high flag rate are "
-            "expected."
+            "broad IDS, NOT a botnet capture -- secondary breadth check only, "
+            "not a tracked bot result. Actor-band entity gating reduced the "
+            "prior degenerate-column over-flagging, so flag rate and "
+            "incidental coverage dropped; current recall 0.122 is not a bot "
+            "regression and precision 0.198 is above prevalence on shard 1 "
+            "but not a bot-detection win."
         ),
     ),
 )

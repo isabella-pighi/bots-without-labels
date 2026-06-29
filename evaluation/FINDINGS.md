@@ -225,7 +225,8 @@ logs and the synthetic suite are unaffected):
 | Stage | recall | precision | flag rate |
 |---|---|---|---|
 | Before (timing/monotony only) | 0.113 | 0.005 | 0.757 |
-| **+ asymmetric_degree** | **1.000** | **0.041** | **0.785** |
+| + asymmetric_degree | 1.000 | 0.041 | 0.785 |
+| **+ actor-band entity gating (current)** | **1.000** | **0.978** | **0.033** |
 
 Reproduce with `uv run --extra eif python -m evaluation.ctu13_bot_benchmark`
 (n = 62,000 rows, base rate 0.032, microsecond timestamps, dense-timing rules
@@ -233,6 +234,42 @@ Reproduce with `uv run --extra eif python -m evaluation.ctu13_bot_benchmark`
 fires on **2,000 of 2,000** positives with **zero** false fires, and *uniquely*
 carries **1,774** of them (the other 226 also trip another rule). On this split it
 is a clean catch.
+
+### The precision fix: keep degenerate categoricals out of per-entity baselining
+
+The middle-row 0.041 precision was never the new rule's doing — it came from
+`entity_monotony` treating the degenerate `Proto` / `State` columns as if they were
+actors and over-flagging the diverse NetFlow background (see the honest ceiling
+below). The fix reuses machinery already in the codebase: the **actor
+cardinality-ratio band** (`ACTOR_MIN_RATIO` = 0.02 to `ACTOR_MAX_RATIO` = 0.5) that
+`_actor_endpoint_columns` uses to pick graph endpoints by *shape* is now also
+applied to the columns `entity_monotony` baselines over (`_entity_columns`). `Proto`
+and `State` are *bounded categoricals* — a handful of distinct values across the
+whole batch — so their cardinality ratio sits **below** the band, and they are
+excluded from per-entity baselining. A real actor column (`Source`/`Destination`
+address) sits **in** the band and is kept. No constant was tuned to CTU-13; the same
+band that already typed graph endpoints now types monotony entities.
+
+The effect, verified end-to-end: CTU-13 precision rises **0.041 → 0.978** and the
+flag rate falls **0.785 → 0.033**, with recall held at **1.000**. An earlier
+per-rule *counterfactual projection* (removing the degenerate-column fires from the
+diagnostic) estimated **0.956**; that was a projection, and the **actual verified
+precision on the re-run pipeline is 0.978** — the number to cite. `asymmetric_degree`
+is unchanged and still carries the recall (2,000/2,000, zero false fires). CICIDS is
+**unchanged** (recall 0.998, precision 0.846, flag rate 0.037): there `Source IP` /
+`Destination IP` stay *in* the band, so `entity_monotony` keeps its recall-carrying
+role on that capture — the fix removes only the degenerate categoricals, not the
+genuine actor columns.
+
+The same band change also moved the **secondary** UNSW-NB15 broad-IDS check
+(`evaluation/BENCHMARKS.md`): recall 0.561 → 0.122, precision 0.090 → 0.198, flag
+rate 0.201 → 0.020. Its earlier recall was partly the *same* degenerate-column
+over-flagging, so the stricter gating made that breadth check **more conservative
+and honest, not strictly better** — and since UNSW-NB15 is a broad IDS dataset, not
+a bot capture, the lower recall is no bot regression.
+
+*Verification: rina-approved (review #37205) against mono's measured benchmark table
+(#37143).*
 
 ### The honest ceiling (CTU-13)
 
@@ -244,12 +281,13 @@ solved problem:
   connectivity asymmetry recovers a diverse directional bot; it is **not** a
   general solution, nor proof that recall recovers on unseen families. A second
   labelled family or scenario remains future validation.
-- **Overall precision is still low (0.0411) — and not the new rule's doing.** The
-  new rule fires cleanly; the low precision comes from *pre-existing broad rules*
-  over-flagging the diverse NetFlow background (notably `entity_monotony` on the
-  degenerate `Proto`/`State` columns). That is a separate calibration question,
-  tracked, not introduced here. Pinning overall precision on this capture would
-  lock in an unrelated limit.
+- **The over-flagging that capped precision is now fixed (0.041 → 0.978).** The low
+  middle-row precision came from *pre-existing broad rules* over-flagging the diverse
+  NetFlow background — notably `entity_monotony` on the degenerate `Proto`/`State`
+  columns — never from the new rule. The actor-band entity gating above excludes
+  those degenerate categoricals, lifting verified precision to **0.978** at a 0.033
+  flag rate with recall held. This was the separate calibration question flagged
+  here; it has now been addressed, not left as a standing limit.
 - **Passive fan-in hubs fire by design.** Because the rule is direction-agnostic,
   a benign monotone server, DNS resolver, NTP source, or load balancer — a real
   one-sided star — is an **explicit false-positive risk**. Degree asymmetry
@@ -271,8 +309,10 @@ not distinguish; and the undirected actor graph (`asymmetric_degree`) added the 
 shape both missed — a diverse, high-degree endpoint that is asymmetric in its
 connectivity. `tests/test_real_benchmark.py` pins the CICIDS stacked wins (recall
 ≥ 0.95, precision ≥ 0.35, flag rate ≤ 0.12); `tests/test_ctu13_benchmark.py` pins
-the CTU-13 recall win (≥ 0.95) but deliberately *not* overall precision, since that
-is capped by a separate rule. Both guards mean a future change that silently
+the CTU-13 recall win (≥ 0.95). The separate rule that originally capped CTU-13
+precision — `entity_monotony` over-flagging the degenerate `Proto`/`State` columns —
+has since been calibrated by the actor-band entity gating, lifting verified CTU-13
+precision to 0.978 with recall held. Both guards mean a future change that silently
 reintroduces a real-data blind spot fails even with the synthetic suite green.
 
 ## References

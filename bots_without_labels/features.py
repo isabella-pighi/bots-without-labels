@@ -455,6 +455,16 @@ def _entity_columns(
     An entity column has many distinct values (so it identifies actors, not a
     handful of categories) but each value recurs (so an actor has several events
     to baseline), and is not essentially unique (that is an identifier).
+
+    It must also sit in the same cardinality-ratio band the relational actor graph
+    uses (:func:`_actor_endpoint_columns`): a *bounded categorical vocabulary*
+    (protocol, TCP state, region) sits below :data:`ACTOR_MIN_RATIO` -- its
+    distinct count does not scale with the data, so it is context, not an actor --
+    and a per-row/edge identifier sits above :data:`ACTOR_MAX_RATIO`. Without this
+    gate, degenerate low-cardinality columns (e.g. CTU-13 ``Proto``/``State``,
+    cardinality ratio ~0.0002-0.002) were baselined as entities, so the
+    ``entity_monotony`` rule over-flagged the NetFlow background; real actor
+    columns (IP addresses, ratio ~0.04-0.06) sit inside the band and are kept.
     """
 
     n_rows = int(frame.shape[0])
@@ -463,6 +473,9 @@ def _entity_columns(
         counts = frame[name].value_counts()
         distinct = len(counts)
         if distinct < ENTITY_MIN_DISTINCT or distinct >= 0.95 * n_rows:
+            continue
+        ratio = distinct / n_rows if n_rows else 0.0
+        if not (ACTOR_MIN_RATIO <= ratio <= ACTOR_MAX_RATIO):
             continue
         if float(counts.median()) < 2:
             continue

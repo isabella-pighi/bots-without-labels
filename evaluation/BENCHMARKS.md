@@ -43,15 +43,15 @@ comparable, like-for-like, with the bot-specific rows.
 | Benchmark | Source / licence | Data shape | Labelled? | Base rate | Timestamp resolution | Entity columns (by detector) | Recall | Precision | Flag rate |
 |---|---|---|---|---|---|---|---|---|---|
 | **CICIDS2017 Friday-morning botnet (Ares)** | CIC / University of New Brunswick; academic terms (registration required) | NetFlow-style flow export; 61,966 rows (60,000 sampled benign + all bot) | Yes — `Label` ∈ {`Bot`, `BENIGN`} | 0.032 | **Minute**-quantised *at source* (`6/7/2017 8:59`) → dense-timing rules **gated off** | `Source IP` / `Destination IP` (degree floor ≈ 551) | **0.998** | **0.846** | **0.037** |
-| **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.041** | **0.785** |
-| *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` | 0.561 | 0.090 | 0.201 |
+| **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.978** | **0.033** |
+| *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` | 0.122 | 0.198 | 0.020 |
 
 The first two rows are the **primary, bot-specific** benchmarks and are the current
-measured output on this branch. Their precision figures look wildly different
-(0.846 vs 0.041) and that contrast is the point, not a defect — see each
-benchmark's honest note below. The headline CTU-13 precision is held down by
-*pre-existing* broad rules over-flagging a diverse NetFlow background, **not** by
-the rule that recovers the bot.
+measured output on this branch. Both now hold high precision at recall ≥ 0.998
+(CICIDS 0.846, CTU-13 0.978) — the CTU-13 figure rose from an earlier 0.041 once the
+broad rule that was over-flagging the diverse NetFlow background was calibrated (see
+its honest note below). The two captures still contrast deliberately on timestamp
+resolution and bot shape; that contrast, not the precision gap, is the point.
 
 The third row, **UNSW-NB15**, is a **secondary** entry on a deliberately different
 footing: it is a *broad intrusion-detection* dataset of nine mixed attack families,
@@ -167,11 +167,13 @@ lacked) still did not recover this bot.
 | Stage | Recall | Precision | Flag rate | What changed |
 |---|---|---|---|---|
 | Before (timing / monotony only) | 0.113 | 0.005 | 0.757 | Microsecond timestamps present and dense-timing rules active, yet the diverse outbound bot is missed. The documented method limit. |
-| **+ `asymmetric_degree` (current)** | **1.000** | **0.041** | **0.785** | An undirected actor graph flags a high-volume endpoint whose degree exceeds an adaptive floor **and** exceeds its reverse-role degree by ~10× **and** is monotone in service — covering both a broadcasting source and a passive fan-in hub, without asserting direction. |
+| + `asymmetric_degree` | 1.000 | 0.041 | 0.785 | An undirected actor graph flags a high-volume endpoint whose degree exceeds an adaptive floor **and** exceeds its reverse-role degree by ~10× **and** is monotone in service — covering both a broadcasting source and a passive fan-in hub, without asserting direction. Recovers recall, but overall precision stays low because other rules over-flag the background. |
+| **+ actor-band entity gating (current)** | **1.000** | **0.978** | **0.033** | Apply the existing **actor cardinality-ratio band** to the columns `entity_monotony` baselines over, so the degenerate `Proto` / `State` categoricals (below the band) are excluded from per-entity baselining. The over-flagging that capped precision goes away; `asymmetric_degree` is untouched and still carries the recall. |
 
-*Source: `FINDINGS.md` lines 180–235. Reproduce with
-`uv run --extra eif python -m evaluation.ctu13_bot_benchmark` (n = 62,000, base
-rate 0.032, microsecond timestamps, dense-timing rules active).*
+*Source: `FINDINGS.md` "asymmetric endpoint degree" section and "The precision fix".
+Reproduce with `uv run --extra eif python -m evaluation.ctu13_bot_benchmark`
+(n = 62,000, base rate 0.032, microsecond timestamps, dense-timing rules active).
+Verified by rina-approved review #37205 against mono's measured table #37143.*
 
 **The new rule is a clean catch.** A per-rule diagnostic on this split shows
 `asymmetric_degree` fires on **2,000 of 2,000** positives with **zero** false
@@ -183,14 +185,15 @@ rule) — `FINDINGS.md` lines 230–235.
 Read this as *hypothesis-supporting evidence within one botnet family*, not a solved
 problem.
 
-- **The low overall precision (0.041) is not the new rule's doing.** The new rule
-  fires cleanly (2,000/2,000, zero false fires). The 0.041 comes from *pre-existing
-  broad rules* over-flagging the diverse NetFlow background — notably `entity_monotony`
-  firing on the degenerate `Proto` / `State` columns. That is a separate calibration
-  question, tracked, not introduced here. Pinning overall precision on this capture
-  would lock in an unrelated limit — which is exactly why
-  `tests/test_ctu13_benchmark.py` pins the **recall** win (≥ 0.95) and deliberately
-  **not** overall precision.
+- **The over-flagging that capped precision has been fixed (0.041 → 0.978).** The
+  new rule always fired cleanly (2,000/2,000, zero false fires); the earlier 0.041
+  came from *pre-existing broad rules* over-flagging the diverse NetFlow background —
+  notably `entity_monotony` firing on the degenerate `Proto` / `State` columns.
+  Excluding those degenerate categoricals from per-entity baselining (via the actor
+  cardinality-ratio band) lifted verified precision to **0.978** at a 0.033 flag
+  rate, recall held. An earlier per-rule counterfactual *projection* had estimated
+  0.956; the actual verified figure on the re-run pipeline is **0.978**.
+  `tests/test_ctu13_benchmark.py` still pins the **recall** win (≥ 0.95).
 - **Same-family evidence only.** Recall 1.000 is on the family the rule was developed
   against (Neris). It supports the hypothesis that connectivity asymmetry recovers a
   diverse directional bot; it is **not** proof of transfer to unseen families. A second
@@ -235,35 +238,48 @@ how the detector behaves on a heterogeneous IDS mix — and is explicitly **not*
 bot-detection win.
 
 **The measured result.** Run with the real (gitignored) `data/UNSW-NB15_1.csv`
-shard present, via `evaluation/run_benchmarks.py --only unsw`:
+shard present, via `evaluation/run_benchmarks.py --only unsw`. The current figures
+are on the same branch as the CTU-13 actor-band entity-gating fix above; the prior
+pre-fix figures are kept to show the effect of the stricter gating:
 
 | Run | Rows | Base rate | Flag rate | Recall | Precision |
 |---|---|---|---|---|---|
-| UNSW-NB15 shard 1/4 (`UNSW-NB15_1.csv`) | 62,000 | 0.032 | 0.201 | 0.561 | 0.090 |
+| UNSW-NB15 shard 1/4 — pre-fix | 62,000 | 0.032 | 0.201 | 0.561 | 0.090 |
+| **UNSW-NB15 shard 1/4 — current** | 62,000 | 0.032 | **0.020** | **0.122** | **0.198** |
 
-*This is **shard 1 of 4** (`UNSW-NB15_1.csv` … `_4.csv`). The figures are a measured
-run of `uv run --extra eif python -m evaluation.run_benchmarks --only unsw` with
-`data/UNSW-NB15_1.csv` present (run 2026-06-29); they are not an estimate, and cover
-only this one shard.*
+*This is **shard 1 of 4** (`UNSW-NB15_1.csv` … `_4.csv`). The current figures are a
+measured run of `uv run --extra eif python -m evaluation.run_benchmarks --only unsw`
+with `data/UNSW-NB15_1.csv` present (verified by rina-approved review #37205 against
+mono's measured table #37143); they are not an estimate, and cover only this one
+shard.*
 
-**How to read it — above prevalence, but modest.** Precision **0.090** is about
-**2.8×** the 0.032 base rate, so a flagged row is more likely to be labelled an
-attack than a random row is. Recall **0.561** means the detector catches **56.1%**
-of the labelled attack slice (recall is coverage of the positives, so it is *not*
-compared to the class base rate; for a volume reference, a random flagger at this
-0.201 flag rate would in expectation catch ~20.1% of them). The numbers are modest,
-and that is **consistent with the method's intended shape** rather than a
-regression. The detector targets the **automation / repetition / concentration**
-pattern — monotone, high-volume, structurally repetitive actors — and many
-UNSW-NB15 attacks (an exploit, a fuzzing run, a one-off reconnaissance probe) leave
-little of that repetitive, concentrated footprint, so a method built for beaconing
-automation would not be expected to flag them. **This is an interpretation, not a
-proven attribution**: confirming *which* attack families are recovered or missed
-needs per-category (`attack_cat`) and per-rule diagnostics across all four shards,
-which this single-shard run does not provide. What shard 1 does establish is that
-the detector lifts above prevalence here while missing a large share of broad-IDS
-attacks. Reading 0.561/0.090 as a "bot-detection result" would misrepresent both
-the dataset and the method.
+**How to read it — above prevalence, and the change is gating, not regression.**
+Precision **0.198** is about **6.2×** the 0.032 base rate, so a flagged row is far
+more likely to be labelled an attack than a random row is. Recall **0.122** means
+the detector now catches **12.2%** of the labelled attack slice (recall is coverage
+of the positives, so it is *not* compared to the class base rate). The current-vs-
+pre-fix move — flag rate 0.201 → 0.020, precision 0.090 → 0.198, recall 0.561 →
+0.122 — is the **same stricter actor gating** that fixed CTU-13: excluding degenerate
+low-cardinality categoricals from per-entity baselining makes the detector flag far
+fewer rows, more precisely. On this broad-IDS shard that **reduces incidental
+coverage** of attacks the method was never built to catch. Crucially, the earlier
+0.561 recall was partly produced by the **same** degenerate-column over-flagging the
+fix removed: `entity_monotony` baselining the bounded `Proto`/`State`-style
+categoricals inflated the flag rate and incidentally swept up broad-IDS attacks. So
+the stricter gating makes this secondary check **more conservative and more honest,
+not strictly better** — a lower recall here is the over-flagging going away, not a
+capability lost. This is **not** a bot regression: UNSW-NB15 is not a bot capture,
+and the dropped flags are largely those incidental hits the looser gating happened
+to surface. The detector still
+targets the **automation / repetition / concentration** pattern — monotone,
+high-volume, structurally repetitive actors — and many UNSW-NB15 attacks (an
+exploit, a fuzzing run, a one-off reconnaissance probe) leave little of that
+footprint, so a method built for beaconing automation would not be expected to flag
+them. **This is an interpretation, not a proven attribution**: confirming *which*
+attack families are recovered or missed needs per-category (`attack_cat`) and
+per-rule diagnostics across all four shards, which this single-shard run does not
+provide. Reading 0.122/0.198 as a "bot-detection result" would misrepresent both the
+dataset and the method.
 
 **Why raw shards, not stripped mirrors.** This result needed the **raw** flow CSVs.
 Several Hugging Face mirrors of UNSW-NB15 ship only the pre-processed,

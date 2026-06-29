@@ -161,6 +161,45 @@ def test_entity_degree_distinguishes_hub_from_point_to_point(tmp_path: Path) -> 
     assert float(dst_degree[store_rows][0]) == 1.0
 
 
+def _degenerate_vocab_log(path: Path) -> Path:
+    """A flow-like CSV with actor IP columns plus a degenerate ``proto`` column.
+
+    ``src``/``dst`` are recurring high-cardinality actors (cardinality ratio
+    inside the actor band); ``proto`` is a bounded categorical vocabulary -- 12
+    values that recur heavily, so it clears the distinct floor and the
+    median-recurrence test, but its cardinality ratio (~12/700) sits *below*
+    ``ACTOR_MIN_RATIO``. It stands in for CTU-13 ``Proto``/``State``.
+    """
+
+    protos = [f"proto{i}" for i in range(12)]
+    header = "src,dst,proto,payload"
+    rows = [header]
+    for s in range(50):
+        for r in range(14):  # 700 rows: 50 src actors x 14 events
+            d = (s + r) % 50
+            proto = protos[(s + r) % 12]
+            payload = (s * 13 + r * 7) % 97
+            rows.append(f"s{s},d{d},{proto},{payload}")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def test_entity_columns_exclude_degenerate_low_cardinality_categorical(
+    tmp_path: Path,
+) -> None:
+    # The cardinality-ratio band keeps a bounded vocabulary (``proto``) out of the
+    # per-entity baseline while retaining the actor-like IP columns -- the fix that
+    # stops entity_monotony over-flagging on CTU-13 Proto/State. ``proto`` is
+    # excluded *only* by the band: it clears the distinct floor (12 >= 10) and the
+    # median-recurrence test, so a vacuous pass is ruled out.
+    log = load(_degenerate_vocab_log(tmp_path / "flows.csv"))
+    fs = build_features(log.frame, log.schema)
+
+    assert "proto" not in fs.context.entity_columns
+    assert "src" in fs.context.entity_columns
+    assert "dst" in fs.context.entity_columns
+
+
 def test_minimal_log_without_timestamp_or_categoricals(tmp_path: Path) -> None:
     path = tmp_path / "amounts.csv"
     path.write_text(

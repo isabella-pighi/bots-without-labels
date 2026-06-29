@@ -50,12 +50,15 @@ Then we ran real, externally-labeled traffic (CICIDS2017 botnet). The story inve
 - **Relational hub structure is what bought real precision.** Only escalating a
   monotonous actor when it sits in a many-sources-to-one-hub structure lifted
   precision **0.144 → 0.441** and cut the flag rate **0.219 → 0.072**, recall held.
-- **Most remaining false positives are not the hub rule's fault.** They come from the
-  other rules. On a sub-second NetFlow capture (CTU-13), an asymmetric-degree graph
-  rule caught **2000/2000** bot flows with **zero** false fires and took recall
-  **0.113 → 1.000** — yet overall precision stayed **~0.04**, because the other
-  heuristics keep over-flagging diverse background. Fix the noisy rules, not the
-  signal that works.
+- **Most remaining false positives were not the hub rule's fault — and we fixed the
+  rule that was to blame.** On a sub-second NetFlow capture (CTU-13), an
+  asymmetric-degree graph rule caught **2000/2000** bot flows with **zero** false
+  fires and took recall **0.113 → 1.000** — but overall precision first stayed
+  **~0.04**, because `entity_monotony` was baselining the degenerate `Proto`/`State`
+  columns as if they were actors and over-flagging the diverse background. Applying
+  the existing actor cardinality-ratio band to the entity columns (so those bounded
+  categoricals are excluded) lifted CTU-13 precision **0.04 → 0.978** at a **0.033**
+  flag rate, recall still **1.000**. Fix the noisy rule, not the signal that works.
 - **Timing features are conditional, not free.** CICIDS timestamps are
   minute-quantized at the source, so the sub-second burst rules fired on whole-minute
   bins — pure noise. Gating those rules off on coarse clocks (adaptively, by detected
@@ -85,8 +88,10 @@ Then we ran real, externally-labeled traffic (CICIDS2017 botnet). The story inve
 - **Do not claim generality from one attack family.** The diverse-bot graph win is
   same-family evidence (CTU-13/Neris, the family it was built against). It supports a
   hypothesis; it is not proof it transfers to unseen families.
-- **Do not present the CTU-13 result as solved.** Recall is recovered; precision is
-  not (~0.04 overall) — the diverse-background over-flagging is an open problem.
+- **Do not over-read the CTU-13 precision.** Recall **1.000** and precision **0.978**
+  are both real now (the entity-column band fix resolved the diverse-background
+  over-flagging), but this is still **one Neris scenario**. Treat 0.978 as a measured
+  result on this capture, not a general precision or proof the method transfers.
 - **Do not trust timing signals on coarse timestamps.** Minute- or second-resolution
   logs cannot support sub-second burst or cadence features; the engine gates them off,
   and so should your interpretation.
