@@ -24,13 +24,19 @@ measured count it is given as a count.
 
 ## How to read the registry
 
-Each benchmark is a **rare-attack mix**: nearly all benign traffic plus a small,
-intact slice of one labelled botnet, sized so the attack is a realistic ~3%
-minority. "Entity columns keyed by detector" are the actor-like columns the engine
-picks out *by shape, never by name* — the addresses it builds its per-entity and
-graph signals on. "Timestamp resolution" matters because the sub-second timing
-rules gate themselves off when the clock is too coarse to carry a beacon cadence;
-it is the axis on which our two kept benchmarks deliberately disagree.
+Each **primary, bot-specific** benchmark (the first two rows) is a **rare-attack
+mix**: nearly all benign traffic plus a small, intact slice of one labelled botnet,
+sized so the attack is a realistic ~3% minority. "Entity columns keyed by detector"
+are the actor-like columns the engine picks out *by shape, never by name* — the
+addresses it builds its per-entity and graph signals on. "Timestamp resolution"
+matters because the sub-second timing rules gate themselves off when the clock is
+too coarse to carry a beacon cadence; it is the axis on which the two primary
+benchmarks deliberately disagree.
+
+**Secondary rows** are on a different footing: they may be labelled *broad-IDS*
+probes (multiple mixed attack families, not a single botnet) included to test the
+method's generality, and must be read on their own terms — their numbers are not
+comparable, like-for-like, with the bot-specific rows.
 
 ## Registry
 
@@ -38,12 +44,19 @@ it is the axis on which our two kept benchmarks deliberately disagree.
 |---|---|---|---|---|---|---|---|---|---|
 | **CICIDS2017 Friday-morning botnet (Ares)** | CIC / University of New Brunswick; academic terms (registration required) | NetFlow-style flow export; 61,966 rows (60,000 sampled benign + all bot) | Yes — `Label` ∈ {`Bot`, `BENIGN`} | 0.032 | **Minute**-quantised *at source* (`6/7/2017 8:59`) → dense-timing rules **gated off** | `Source IP` / `Destination IP` (degree floor ≈ 551) | **0.998** | **0.846** | **0.037** |
 | **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.041** | **0.785** |
+| *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` | 0.561 | 0.090 | 0.201 |
 
-Both rows are the **current** measured output on this branch. The two precision
-figures look wildly different (0.846 vs 0.041) and that contrast is the point, not
-a defect — see each benchmark's honest note below. The headline CTU-13 precision
-is held down by *pre-existing* broad rules over-flagging a diverse NetFlow
-background, **not** by the rule that recovers the bot.
+The first two rows are the **primary, bot-specific** benchmarks and are the current
+measured output on this branch. Their precision figures look wildly different
+(0.846 vs 0.041) and that contrast is the point, not a defect — see each
+benchmark's honest note below. The headline CTU-13 precision is held down by
+*pre-existing* broad rules over-flagging a diverse NetFlow background, **not** by
+the rule that recovers the bot.
+
+The third row, **UNSW-NB15**, is a **secondary** entry on a deliberately different
+footing: it is a *broad intrusion-detection* dataset of nine mixed attack families,
+**not** a bot capture, so its modest numbers are read as a generality probe, not a
+bot-detection result — see its section below.
 
 ### Reproduce
 
@@ -207,33 +220,69 @@ at (`FINDINGS.md` lines 8–23).
 A fair test needs a *rare*, externally-labelled attack population; the first three
 fail on majority-class, missing-label or coarse-timestamp grounds.
 
-## UNSW-NB15 (candidate, not yet a benchmark)
+## UNSW-NB15 shard 1/4 — secondary, broad-IDS generality probe
 
-UNSW-NB15 is a frequently-cited IDS dataset, but it is **not currently a row in this
-registry**, for two reasons worth recording so the gap is a decision, not an oversight:
+UNSW-NB15 is now a **tracked secondary row**, with a first measured result on the
+real raw data — but it is on a different footing from the two bot benchmarks above,
+and the framing matters more than the number.
 
-- **It is a broad IDS dataset, not a bot-specific capture.** UNSW-NB15's labels cover
-  nine general attack *categories* (e.g. exploits, reconnaissance, DoS, generic). Its
-  nearest label, `Bot`-like activity, is not isolated as a single beaconing-botnet
-  population the way CICIDS-Ares and CTU-13-Neris are. Dropping it in as-is would mix
-  "intrusion" with "bot" and muddy what this registry measures.
-- **Stripped Hugging Face mirrors are unsuitable.** Several HF mirrors of UNSW-NB15
-  ship only the pre-processed/feature-engineered CSVs (the 49-feature
-  `UNSW_NB15_training-set.csv` style export), with raw per-flow identifiers — source
-  and destination addresses, ports, fine timestamps — already dropped or aggregated.
-  Those are exactly the **actor-endpoint and timestamp columns** the detector keys on,
-  so a stripped mirror cannot exercise the per-entity, graph or timing signals. A fair
-  UNSW-NB15 benchmark would need the **raw flow records** from the official source:
+**What it is.** UNSW-NB15 is a frequently-cited *broad intrusion-detection* dataset.
+Its labels cover **nine mixed attack families** (e.g. exploits, reconnaissance, DoS,
+fuzzers, generic, shellcode), captured as a `Label` 0/1 flag plus an `attack_cat`
+category. It is **not** a bot capture: there is no single beaconing-botnet population
+isolated the way CICIDS-Ares and CTU-13-Neris are. So this row probes *generality* —
+how the detector behaves on a heterogeneous IDS mix — and is explicitly **not** a
+bot-detection win.
 
-  > UNSW-NB15, Cyber Range Lab, UNSW Canberra.
-  > <https://research.unsw.edu.au/projects/unsw-nb15-dataset>
-  > Download the raw pcap-derived flow CSVs (`UNSW-NB15_1.csv` … `_4.csv`) with the
-  > full Argus/Bro feature set including `srcip`, `dstip`, `sport`, `dsport`, `Stime`,
-  > so the loader sees real entity columns and timestamps.
+**The measured result.** Run with the real (gitignored) `data/UNSW-NB15_1.csv`
+shard present, via `evaluation/run_benchmarks.py --only unsw`:
 
-  Until that raw data is in place, `evaluation/unsw_benchmark.py` is a
-  **skip-if-absent wrapper only** — it does *not* contribute a tracked number to the
-  registry — and the dataset is framed here as **broad IDS, not bot-specific**.
+| Run | Rows | Base rate | Flag rate | Recall | Precision |
+|---|---|---|---|---|---|
+| UNSW-NB15 shard 1/4 (`UNSW-NB15_1.csv`) | 62,000 | 0.032 | 0.201 | 0.561 | 0.090 |
+
+*This is **shard 1 of 4** (`UNSW-NB15_1.csv` … `_4.csv`). The figures are a measured
+run of `uv run --extra eif python -m evaluation.run_benchmarks --only unsw` with
+`data/UNSW-NB15_1.csv` present (run 2026-06-29); they are not an estimate, and cover
+only this one shard.*
+
+**How to read it — above prevalence, but modest.** Precision **0.090** is about
+**2.8×** the 0.032 base rate, so a flagged row is more likely to be labelled an
+attack than a random row is. Recall **0.561** means the detector catches **56.1%**
+of the labelled attack slice (recall is coverage of the positives, so it is *not*
+compared to the class base rate; for a volume reference, a random flagger at this
+0.201 flag rate would in expectation catch ~20.1% of them). The numbers are modest,
+and that is **consistent with the method's intended shape** rather than a
+regression. The detector targets the **automation / repetition / concentration**
+pattern — monotone, high-volume, structurally repetitive actors — and many
+UNSW-NB15 attacks (an exploit, a fuzzing run, a one-off reconnaissance probe) leave
+little of that repetitive, concentrated footprint, so a method built for beaconing
+automation would not be expected to flag them. **This is an interpretation, not a
+proven attribution**: confirming *which* attack families are recovered or missed
+needs per-category (`attack_cat`) and per-rule diagnostics across all four shards,
+which this single-shard run does not provide. What shard 1 does establish is that
+the detector lifts above prevalence here while missing a large share of broad-IDS
+attacks. Reading 0.561/0.090 as a "bot-detection result" would misrepresent both
+the dataset and the method.
+
+**Why raw shards, not stripped mirrors.** This result needed the **raw** flow CSVs.
+Several Hugging Face mirrors of UNSW-NB15 ship only the pre-processed,
+feature-engineered export (the 49-feature `UNSW_NB15_training-set.csv` style), with
+the raw per-flow identifiers — source and destination addresses, ports, fine
+timestamps — already dropped or aggregated. Those are exactly the **actor-endpoint
+and timestamp columns** the detector keys on, so a stripped mirror cannot exercise
+the per-entity, graph or timing signals at all. The benchmark therefore uses the
+raw records from the official source:
+
+> UNSW-NB15, Cyber Range Lab, UNSW Canberra.
+> <https://research.unsw.edu.au/projects/unsw-nb15-dataset>
+> Download the raw pcap-derived flow CSVs (`UNSW-NB15_1.csv` … `_4.csv`) with the
+> full Argus/Bro feature set including `srcip`, `dstip`, `sport`, `dsport`, `Stime`,
+> so the loader sees real entity columns and timestamps.
+
+`evaluation/unsw_benchmark.py` remains **skip-if-absent**: with no shard present it
+contributes no number; this row reflects the run with `UNSW-NB15_1.csv` in place.
+Extending the measurement across all four shards is a natural follow-up.
 
 ---
 
