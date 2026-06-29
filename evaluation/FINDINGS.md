@@ -276,11 +276,13 @@ a bot capture, the lower recall is no bot regression.
 Read this as *hypothesis-supporting evidence within one botnet family*, not a
 solved problem:
 
-- **Same-family evidence only.** Recall 1.0000 is on CTU-13 / Neris — the same
-  family the rule was developed against. It supports the hypothesis that
-  connectivity asymmetry recovers a diverse directional bot; it is **not** a
-  general solution, nor proof that recall recovers on unseen families. A second
-  labelled family or scenario remains future validation.
+- **Same-family evidence only — now partly tested on a second family.** Recall
+  1.0000 is on CTU-13 / Neris — the same family the rule was developed against. It
+  supports the hypothesis that connectivity asymmetry recovers a diverse directional
+  bot; it is **not** a general solution. A second labelled family (CTU-13 scenario 3
+  / Rbot) has since been run as a generality probe — and the result is split: the
+  **recall generalises, the precision does not**. See "The second-family test"
+  below.
 - **The over-flagging that capped precision is now fixed (0.041 → 0.978).** The low
   middle-row precision came from *pre-existing broad rules* over-flagging the diverse
   NetFlow background — notably `entity_monotony` on the degenerate `Proto`/`State`
@@ -299,6 +301,52 @@ solved problem:
   below ≈ 10 and vanishes at ≥ 200 (beyond Neris's own ratio). They are *not*
   scale-free, and should not be read as tuned constants for other captures.
 
+## The second-family test: CTU-13 scenario 3 / Rbot
+
+The honest ceiling above asks for a *second labelled family* before reading the
+`asymmetric_degree` win as anything more than same-family evidence. CTU-13 scenario
+3 runs a different bot — **Rbot**, an IRC-controlled DDoS/scan botnet — captured the
+same way (Argus bidirectional NetFlow, CC-BY). Running the identical pipeline on it,
+with **no detector change**, gives a deliberately split answer:
+
+| Capture | recall | precision | flag rate |
+|---|---|---|---|
+| CTU-13 sc1 (Neris) | 1.000 | 0.978 | 0.033 |
+| **CTU-13 sc3 (Rbot)** | **0.985** | **0.056** | **0.567** |
+
+(n = 62,000 rows, base rate 0.0323. Source: CTU-Malware-Capture-Botnet-44 detailed
+bidirectional flow labels, Stratosphere Laboratory / CTU, CC-BY; a skip-if-absent
+benchmark like the others.)
+
+**The recall generalises; the precision does not.** Recall 0.985 says the
+connectivity-asymmetry signal *does* recover a second, different bot family — the
+core hypothesis holds across families. But precision collapses to 0.056 at a 0.567
+flag rate: on Rbot the rule over-flags massively. The attribution is unambiguous and,
+importantly, **not** the scenario-1 story:
+
+- `asymmetric_degree` itself fired on **34,995** rows, carrying **1,970** true
+  positives and **33,025** false positives — a stand-alone fire-precision of
+  **0.056**. The rule that was a clean 2,000/2,000-zero-FP catch on Neris is the
+  *direct* source of the false positives on Rbot.
+- The scenario-1 culprit is ruled out: here `entity_columns = []` (no column's
+  cardinality ratio lands in the actor band), so `entity_monotony` and the
+  `Proto`/`State` over-flagging play **no** part. This is the actor-graph rule's own
+  precision failing to transfer, not the previously-fixed degenerate-column issue
+  resurfacing.
+
+**What this is — and is not.** This is a **known detector-generality gap** and a
+**regression target**: the asymmetry signal's *recall* is family-robust, but its
+near-zero-false-positive *precision* on Neris was specific to that capture's
+structure and does not carry to Rbot. It is recorded here as an honest evaluation
+finding — neither a failure to hide nor a win to overclaim. **No fix is proposed and
+no calibration is started in this work**; the precision-generality gap is logged as
+an **open follow-up** only. The protected gates are unchanged by this evaluation:
+CICIDS 0.998 / 0.846 / 0.037, CTU-13 sc1 1.000 / 0.978 / 0.033, and UNSW-NB15 0.122 /
+0.198 / 0.020 all stand.
+
+*Measured by mono (#37642); recorded as an evaluation-only finding per boss decision
+#37707.*
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was
@@ -314,6 +362,12 @@ precision — `entity_monotony` over-flagging the degenerate `Proto`/`State` col
 has since been calibrated by the actor-band entity gating, lifting verified CTU-13
 precision to 0.978 with recall held. Both guards mean a future change that silently
 reintroduces a real-data blind spot fails even with the synthetic suite green.
+
+The one honest caveat the second family adds: `asymmetric_degree`'s **recall** is
+family-robust (it recovers Rbot as well as Neris), but its near-zero-false-positive
+**precision** on Neris does **not** generalise — on Rbot the same rule over-flags
+(precision 0.056). The skeleton holds; closing that precision-generality gap is the
+next open piece of work, logged but not started here.
 
 ## References
 

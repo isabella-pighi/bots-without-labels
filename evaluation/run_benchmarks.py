@@ -36,6 +36,9 @@ from evaluation import (
     unsw_benchmark,
 )
 
+# CTU-13 sc3 (Rbot) capture path, via the wrapper's scenario registry.
+_SC3_BINETFLOW = ctu13_bot_benchmark.SCENARIOS["sc3"]["binetflow"]
+
 
 @dataclass(frozen=True)
 class Benchmark:
@@ -77,6 +80,21 @@ BENCHMARKS: tuple[Benchmark, ...] = (
             "over-flagging on the degenerate Proto/State columns. Verified "
             "precision 0.978 / recall 1.000 / flag 0.033 on this one Neris "
             "scenario -- a measured result here, not a general precision."
+        ),
+    ),
+    Benchmark(
+        key="ctu13_sc3",
+        title="CTU-13 scenario 3 (Rbot)",
+        tier="tracked",
+        present=lambda: _SC3_BINETFLOW.exists(),
+        absent_reason=f"binetflow {_SC3_BINETFLOW} absent",
+        run=lambda: ctu13_bot_benchmark.run(_SC3_BINETFLOW),
+        caveat=(
+            "generality probe (2nd family): recall 0.985 GENERALISES the "
+            "diverse-bot catch, BUT asymmetric_degree is not clean here -- it "
+            "over-fires (fire-precision 0.056 vs 1.000 on Neris), so precision "
+            "is ~0.056. The actor rule's Neris cleanliness does NOT generalise "
+            "-- a detector-generality gap, reported not tuned."
         ),
     ),
     Benchmark(

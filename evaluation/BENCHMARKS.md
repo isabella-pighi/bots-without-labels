@@ -44,6 +44,7 @@ comparable, like-for-like, with the bot-specific rows.
 |---|---|---|---|---|---|---|---|---|---|
 | **CICIDS2017 Friday-morning botnet (Ares)** | CIC / University of New Brunswick; academic terms (registration required) | NetFlow-style flow export; 61,966 rows (60,000 sampled benign + all bot) | Yes — `Label` ∈ {`Bot`, `BENIGN`} | 0.032 | **Minute**-quantised *at source* (`6/7/2017 8:59`) → dense-timing rules **gated off** | `Source IP` / `Destination IP` (degree floor ≈ 551) | **0.998** | **0.846** | **0.037** |
 | **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.978** | **0.033** |
+| *Generality probe —* **CTU-13 scenario 3 (Rbot)** *(second family; recall generalises, precision does not)* | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows | Yes — directional `Label`; `From-Botnet` = positive | 0.0323 | **Microsecond** → dense-timing rules **active** | actor endpoints chosen by shape | 0.985 | 0.056 | 0.567 |
 | *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` | 0.122 | 0.198 | 0.020 |
 
 The first two rows are the **primary, bot-specific** benchmarks and are the current
@@ -53,7 +54,14 @@ broad rule that was over-flagging the diverse NetFlow background was calibrated 
 its honest note below). The two captures still contrast deliberately on timestamp
 resolution and bot shape; that contrast, not the precision gap, is the point.
 
-The third row, **UNSW-NB15**, is a **secondary** entry on a deliberately different
+The third row, **CTU-13 scenario 3 (Rbot)**, is a **second-family generality probe**,
+run with **no detector change**. Its split result is the honest point, not a tracked
+operational number: the asymmetry signal's **recall generalises** to a different bot
+family (0.985), but its near-zero-false-positive **precision does not** (0.056 at a
+0.567 flag rate). Read it as a logged detector-generality gap, not a bot-detection
+result — see its section below.
+
+The fourth row, **UNSW-NB15**, is a **secondary** entry on a deliberately different
 footing: it is a *broad intrusion-detection* dataset of nine mixed attack families,
 **not** a bot capture, so its modest numbers are read as a generality probe, not a
 bot-detection result — see its section below.
@@ -194,10 +202,10 @@ problem.
   rate, recall held. An earlier per-rule counterfactual *projection* had estimated
   0.956; the actual verified figure on the re-run pipeline is **0.978**.
   `tests/test_ctu13_benchmark.py` still pins the **recall** win (≥ 0.95).
-- **Same-family evidence only.** Recall 1.000 is on the family the rule was developed
-  against (Neris). It supports the hypothesis that connectivity asymmetry recovers a
-  diverse directional bot; it is **not** proof of transfer to unseen families. A second
-  labelled family remains future validation.
+- **Same-family evidence — now partly tested.** Recall 1.000 is on the family the
+  rule was developed against (Neris). A second labelled family (CTU-13 scenario 3 /
+  Rbot) has since been run as a generality probe: the **recall generalises (0.985)**
+  but the **precision does not (0.056)**. See "CTU-13 scenario 3 (Rbot)" below.
 - **Passive fan-in hubs fire by design.** Because the rule is direction-agnostic, a
   benign monotone server, DNS resolver, NTP source or load balancer — a real one-sided
   star — is an explicit false-positive risk.
@@ -205,6 +213,66 @@ problem.
   99th-percentile floor hold for asymmetry factors ≈ 10–100 on this one split plus a
   synthetic broadcaster; the rule over-fires below ≈ 10 and vanishes at ≥ 200. They are
   not scale-free constants.
+
+---
+
+## CTU-13 scenario 3 (Rbot) — second-family generality test
+
+The CTU-13 scenario 1 honest ceiling asks for a **second labelled family** before the
+`asymmetric_degree` win is read as more than same-family evidence. Scenario 3 supplies
+one: a different bot, **Rbot** (an IRC-controlled DDoS/scan botnet), captured the same
+way (Argus bidirectional NetFlow, CC-BY). The identical pipeline was run on it with
+**no detector change**. The answer is deliberately split:
+
+| Capture | Recall | Precision | Flag rate |
+|---|---|---|---|
+| CTU-13 sc1 (Neris) | 1.000 | 0.978 | 0.033 |
+| **CTU-13 sc3 (Rbot)** | **0.985** | **0.056** | **0.567** |
+
+*n = 62,000 rows, base rate 0.0323. Source: CTU-Malware-Capture-Botnet-44 detailed
+bidirectional flow labels (Stratosphere Laboratory / CTU, CC-BY); a skip-if-absent
+benchmark like the others. Measured by mono (#37642); recorded as an evaluation-only
+finding per boss decision #37707.*
+
+**Recall generalises; precision does not.** Recall 0.985 shows the
+connectivity-asymmetry signal recovers a *second, different* bot family — the core
+hypothesis holds across families. But precision collapses to 0.056 at a 0.567 flag
+rate: on Rbot the rule over-flags badly. The attribution is unambiguous, and crucially
+it is **not** the scenario-1 story:
+
+- `asymmetric_degree` itself fired on **34,995** rows — **1,970** true positives and
+  **33,025** false positives, a stand-alone fire-precision of **0.056**. The rule that
+  was a clean 2,000/2,000-zero-false-fire catch on Neris is the *direct* source of the
+  false positives on Rbot.
+- The scenario-1 culprit is ruled out: here `entity_columns = []` (no column's
+  cardinality ratio lands in the actor band), so `entity_monotony` and the
+  `Proto`/`State` over-flagging are **not** involved. This is the actor-graph rule's
+  own precision failing to transfer, not the previously-fixed degenerate-column issue
+  returning.
+
+**What this is — and is not.** This is a **known detector-generality gap** and a
+**regression target**, logged as an **open follow-up only** — no fix is proposed and
+no calibration is started here. The asymmetry signal's *recall* is family-robust; its
+near-zero-false-positive *precision* on Neris was specific to that capture and does not
+carry to Rbot. It is recorded as an honest evaluation finding: neither a failure to
+hide nor a win to overclaim. The protected gates are unchanged by this evaluation —
+CICIDS 0.998 / 0.846 / 0.037, CTU-13 sc1 1.000 / 0.978 / 0.033 and UNSW-NB15 0.122 /
+0.198 / 0.020 all still hold.
+
+Reproduce by fetching the scenario-3 capture and selecting the `sc3` scenario:
+
+```bash
+curl -o data/capture20110812.binetflow \
+  https://mcfp.felk.cvut.cz/publicDatasets/CTU-Malware-Capture-Botnet-44/detailed-bidirectional-flow-labels/capture20110812.binetflow
+uv run --extra eif python -m evaluation.ctu13_bot_benchmark --scenario sc3
+```
+
+`--scenario sc3` selects the Rbot capture and labels the output as scenario 3. An
+explicit `--binetflow <path>` override is labelled by its matching registry scenario,
+so it cannot be mis-reported under the scenario-1 heading. The combined runner also
+carries it as `uv run --extra eif python -m evaluation.run_benchmarks --only
+ctu13_sc3`. Like the other benchmarks, it is skip-if-absent when the capture is not
+present locally.
 
 ---
 

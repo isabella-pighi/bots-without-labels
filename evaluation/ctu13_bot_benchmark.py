@@ -36,6 +36,13 @@ Download (369 MB, under our 400 MB ceiling), then run:
     curl -o data/capture20110810.binetflow \
         https://mcfp.felk.cvut.cz/publicDatasets/CTU-Malware-Capture-Botnet-42/detailed-bidirectional-flow-labels/capture20110810.binetflow
     uv run --extra eif python -m evaluation.ctu13_bot_benchmark
+
+A second, independent family -- CTU-13 scenario 3 / Rbot (Botnet-44, 640 MB,
+*above* the 400 MB ceiling so it is an opt-in local fetch) -- is wired through the
+same wrapper to test whether the diverse-bot win generalises beyond Neris:
+    curl -o data/capture20110812.binetflow \
+        https://mcfp.felk.cvut.cz/publicDatasets/CTU-Malware-Capture-Botnet-44/detailed-bidirectional-flow-labels/capture20110812.binetflow
+    uv run --extra eif python -m evaluation.ctu13_bot_benchmark --scenario sc3
 """
 
 from __future__ import annotations
@@ -51,7 +58,27 @@ from bots_without_labels.evaluate import evaluate_injection
 from bots_without_labels.ingest import load
 from bots_without_labels.pipeline import HEURISTIC_CUTOFF, detect
 
-DEFAULT_BINETFLOW = Path("data/capture20110810.binetflow")
+# CTU-13 scenarios share the Argus directional-label format, so a single
+# build_mix/run handles any of them -- only the capture file and its provenance
+# differ. sc1/Neris is the original tracked benchmark; sc3/Rbot is a second,
+# independent family used to test whether the diverse-bot win generalises beyond
+# Neris (the asymmetric_degree + actor-band story). Each value is the (name,
+# binetflow path, CTU-Malware-Capture id for the fetch URL).
+SCENARIOS = {
+    "sc1": {
+        "name": "scenario 1 (Neris)",
+        "binetflow": Path("data/capture20110810.binetflow"),
+        "capture": "CTU-Malware-Capture-Botnet-42",
+    },
+    "sc3": {
+        "name": "scenario 3 (Rbot)",
+        "binetflow": Path("data/capture20110812.binetflow"),
+        "capture": "CTU-Malware-Capture-Botnet-44",
+    },
+}
+# Backward-compatible default (sc1): kept as a module constant because
+# tests/test_ctu13_benchmark.py and the runner import it by name.
+DEFAULT_BINETFLOW = SCENARIOS["sc1"]["binetflow"]
 # Argus bidirectional NetFlow header (comma-separated).
 LABEL_COLUMN = "Label"
 TIME_COLUMN = "StartTime"
@@ -144,16 +171,50 @@ def run(
     return report
 
 
+def _scenario_label(scenario_key: str, binetflow: Path | None) -> str:
+    """Heading label for the effective capture.
+
+    With no explicit ``--binetflow`` the chosen ``--scenario`` names itself. When
+    ``--binetflow`` is given it is labelled by the matching registry scenario if
+    the path is a known capture, otherwise by an explicit *custom capture*
+    heading -- never by silently inheriting the ``--scenario`` default, which
+    would mislabel (e.g. report the sc3/Rbot file under the sc1/Neris heading).
+    """
+
+    if binetflow is None:
+        return SCENARIOS[scenario_key]["name"]
+    for scenario in SCENARIOS.values():
+        if Path(scenario["binetflow"]) == Path(binetflow):
+            return scenario["name"]
+    return f"custom capture ({binetflow})"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ctu13_bot_benchmark")
-    parser.add_argument("--binetflow", type=Path, default=DEFAULT_BINETFLOW)
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(SCENARIOS),
+        default="sc1",
+        help="CTU-13 scenario to run (default sc1/Neris; sc3 is Rbot)",
+    )
+    parser.add_argument(
+        "--binetflow",
+        type=Path,
+        default=None,
+        help="explicit binetflow path (overrides --scenario)",
+    )
     parser.add_argument("--bot", type=int, default=N_BOT)
     parser.add_argument("--benign", type=int, default=N_BENIGN)
     args = parser.parse_args(argv)
 
-    report = run(args.binetflow, n_bot=args.bot, n_benign=args.benign)
+    if args.binetflow is not None:
+        path = args.binetflow
+    else:
+        path = SCENARIOS[args.scenario]["binetflow"]
+    label = _scenario_label(args.scenario, args.binetflow)
+    report = run(path, n_bot=args.bot, n_benign=args.benign)
     grid = report["timestamp_grid_seconds"]
-    print("CTU-13 scenario 1 (Neris) fine-resolution benchmark")
+    print(f"CTU-13 {label} fine-resolution benchmark")
     print(f"  rows                {report['n_rows']:>10d}")
     print(f"  base rate           {report['base_rate']:>10.4f}")
     print(
