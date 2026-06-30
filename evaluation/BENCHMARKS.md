@@ -332,21 +332,22 @@ fail on majority-class, missing-label or coarse-timestamp grounds.
 
 ### Dataset-pool sweep (web-bot and IDS candidates)
 
-A later sweep assessed four further candidate datasets for the pool. Two were
-**evaluated and skipped** on honesty grounds; the reasons are recorded so each skip is
-a documented decision, not a silent omission:
+A later sweep assessed four further candidate datasets for the pool. Of the four, one
+(Bournemouth) was wired and measured — the provisional, licence-pending **negative**
+result in the registry above, detailed in its own section below — and **three were
+evaluated and skipped** on honesty grounds. The skip reasons are recorded so each is a
+documented decision, not a silent omission:
 
 | Source / licence | Dataset | Why skipped |
 |---|---|---|
 | Zenodo 3477932 (CC-BY-4.0) | Web Robot Detection — server logs (*web-log domain*) | The labelled files are **aggregated per-session features** with no raw entities or timestamps; the raw per-request events carry entities and timestamps but **no joinable label** (session-ids and request-ids are different id spaces, no mapping). Deriving a label from IP / user-agent / time would be **circular leakage** — the detector keys on those same fields. No honest event-level label mapping exists. |
 | AWS open-data (CSE-CIC-IDS2018) | CSE-CIC-IDS2018 botnet day (*netflow domain*) | The official processed ML CSVs are **IP-stripped** (no source/destination IP, only a bounded `Dst Port`), so the per-entity, actor-graph and monotony rules have no actor entities and stay **dormant** — it would not be a fair test of this detector. Recovering IPs would need CICFlowMeter reprocessing of the raw pcaps, out of evaluation-only scope. |
+| Kaggle (ISIT-2024 "Bits and Bots") | Browser-interaction sessions (*web-log domain*) | The accessible competition files are **two bot classes** — `gremlins/` and `hlisa_traces/`, where HLISA is a tool that *generates* human-**like** bot traces, **not** real users. No human-labelled traffic is accessible (the IEEE competition description holds real-human data out as the evaluation set). With no honest bot-vs-human ground truth, a gremlin-vs-HLISA run would be **bot-vs-bot** — a category mismatch for an automation-ranking detector that would flag both classes — and **HLISA must never be labelled "human."** Skipped per boss decision. |
 
-The Bournemouth Web Bot Detection set (*web-log domain*) has since been **measured** —
-a provisional, licence-pending **negative** result, recorded in the registry above and
-detailed in its own section below. One further candidate, ISIT-2024 "Bits and Bots"
-(Kaggle; *web-log domain*), remains **blocked** on a one-time human competition
-rules-acceptance and is **not yet recorded**; its row will be added only once measured
-and approved.
+So three of the four candidates carry no honest, accessible, real-label test for this
+detector, and only Bournemouth was measurable — itself a domain-transfer negative. The
+sweep is a reminder that clean web-bot benchmarks pairing real entities, real
+timestamps, and a real human-vs-bot label are genuinely scarce.
 
 ## UNSW-NB15 shard 1/4 — secondary, broad-IDS generality probe
 
