@@ -481,6 +481,15 @@ own domain — the netflow gates are unchanged (CICIDS 0.998 / 0.846 / 0.037, CT
 is **not** a fraud verdict. It is recorded because an honest registry shows where the
 method *fails* to transfer, not only where it works.
 
+**It is a method limit, not an entity-selection bug.** A Phase-1 diagnosis confirmed
+that *forcing* `session_id` active does not recover detection — it caught **0 of 11**
+bot sessions and flagged monotone *human* sessions, because bot and human diversity,
+timing CV, request entropy and volume all overlap. So the actor band is not the lever
+and must not be forced; closing this gap needs **web-specific signals** (interaction
+biometrics such as the mouse-movement data Bournemouth carries), a separate future
+capability — see `evaluation/FINDINGS.md` and `TODO.md` (P3, item 12). The result here
+stays recall 0.474 / precision 0.020 / flag 0.681, provisional/licence-pending.
+
 Reproduce (the dataset is gitignored and licence-pending, so this is local/manual):
 
 ```bash

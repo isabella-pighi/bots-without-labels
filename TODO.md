@@ -194,3 +194,24 @@ Live threat-intelligence providers could strengthen detection when credentials
 and usage terms allow. Keep them optional and disabled by default, never require
 credentials to run the project, and cache unique-entity lookups rather than
 calling per event.
+
+### 12. Web-behavioural / interaction-biometric signals for human-mimicking web bots
+
+The current detector targets **mechanical automation and network botnets** — it
+keys on repetition, concentration, behavioural monotony, and timing regularity.
+The Bournemouth web-log evaluation (see `evaluation/FINDINGS.md`) showed this does
+**not** transfer to *evasive, human-mimicking web bots*: their diversity, timing
+coefficient-of-variation, request entropy, and volume **overlap** with real humans,
+so the signals the engine measures cannot separate the two. The Phase-1 diagnosis is
+concrete — even forcing `session_id` to be the actor entity, `entity_monotony` caught
+**0 of 11** bot sessions and flagged monotone humans, and overall precision sat
+*below* the base rate.
+
+This is a **method limit, not a calibration**: no threshold or entity-selection
+change closes it. A future capability would need **web-specific behavioural signals**
+the current rules do not model — for example **mouse dynamics / interaction
+biometrics**, page-sequence / navigation modelling, or keystroke cadence. Bournemouth
+ships **mouse-movement data**, which gives a ready validation source. This is a
+**separate research direction** — likely supervised or biometric, and probably its
+own pipeline — **not** a tweak to the existing unsupervised rules. Treat it as
+exploratory until trusted labels and the extra signal streams exist.

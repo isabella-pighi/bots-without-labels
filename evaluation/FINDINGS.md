@@ -421,6 +421,27 @@ numbers are **provisional / local-internal** pending a licence decision (researc
 invited, copyright reserved). The netflow gates are unchanged. *Measured by mono,
 verified by rina (#38700); see `evaluation/BENCHMARKS.md` for the full row and caveats.*
 
+### Phase-1 diagnosis: a method limit, not an entity-selection bug
+
+It would be easy to read "the actor rules went dormant" as a *configuration* problem —
+fix the entity selection and the result improves. A Phase-1 diagnosis shows it is not.
+`session_id` is the only real actor column in this log, and **forcing it active anyway
+does not help**: with `session_id` baselined as the entity, `entity_monotony` caught
+**0 of 11** Bournemouth bot sessions and instead flagged *monotone human* sessions. The
+reason is that the discriminating features simply do not separate the two classes here —
+bot and human **diversity, timing coefficient-of-variation, request entropy, and volume
+all overlap**. The human-mimicking web bots in this dataset are, on exactly the axes the
+detector measures, indistinguishable from people.
+
+So the **actor band is not the lever, and must not be forced** — doing so trades a clean
+"dormant by data" state for active false positives on monotone humans, with no recall to
+show for it. This is a **method limit**: the detector's repetition / timing /
+concentration / diversity signals, which work on mechanical automation and network
+botnets, **do not transfer to human-mimicking web bots**. Closing the gap is not
+calibration; it needs **web-specific signals** — interaction biometrics such as mouse
+dynamics, which Bournemouth happens to carry — a separate future capability, tracked in
+`TODO.md` (P3, item 12), not a tweak to the existing rules.
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was
