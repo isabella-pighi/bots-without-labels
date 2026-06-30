@@ -352,27 +352,23 @@ def test_asymmetric_degree_fires_on_star_only(tmp_path: Path) -> None:
     assert not _fired(result, "asymmetric_degree", client_rows).any()
 
 
-def test_asymmetric_degree_fires_on_passive_fanin_hub(tmp_path: Path) -> None:
-    # Chosen semantics (explicit): the rule is direction-agnostic. A passive
-    # fan-IN hub (server reached by many, never a source) is just as asymmetric as
-    # a broadcasting source, so it DOES fire -- but the explanation must NOT claim
-    # it "fans out", since the undirected graph cannot establish direction.
+def test_asymmetric_degree_does_not_fire_on_passive_fanin_hub(tmp_path: Path) -> None:
+    # Directional semantics (Phase 2): the rule fires only on a SOURCE fan-out
+    # broadcaster, not on a passive fan-IN hub. A server reached by many distinct
+    # clients on a monotone service (high in-degree, never a source) is the shape of
+    # a benign DNS/NTP/load-balancer -- and the dominant false positive on real
+    # captures (CTU-13 Rbot). It must NOT fire here; fan-in C2 coverage is owned by
+    # the direction-agnostic hub escalation in entity_monotony.
     loaded = load(_passive_fanin_log(tmp_path / "fanin.csv"))
     fs = build_features(loaded.frame, loaded.schema)
     result = apply_rules(loaded.frame, loaded.schema, fs)
 
     dst = loaded.frame["dst"].astype(str).to_numpy()
     hub_rows = np.where(dst == "10.0.0.9")[0]
+    # The actor graph still builds (the hub is a real high-degree endpoint) ...
     assert result.thresholds["actor_graph_active"] is True
-    assert _fired(result, "asymmetric_degree", hub_rows).all()
-    reasons = {
-        hit.reason
-        for row in hub_rows
-        for hit in result.hits[row]
-        if hit.rule_id == "asymmetric_degree"
-    }
-    joined = " ".join(reasons).lower()
-    assert "fan" not in joined and "broadcast" not in joined, reasons
+    # ... but asymmetric_degree, now source-only, does not fire on the fan-in hub.
+    assert not _fired(result, "asymmetric_degree", hub_rows).any()
 
 
 def test_asymmetric_degree_dormant_without_endpoints(tmp_path: Path) -> None:

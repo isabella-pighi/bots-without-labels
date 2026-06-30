@@ -73,18 +73,23 @@ ENTITY_DIVERSITY_PERCENTILE = 0.10
 # it toward a specific botnet's observed fan-out would be overfitting.
 MIN_HUB_DEGREE = 3
 
-# Asymmetric high-degree endpoint: a value that connects to an unusually large
-# number of distinct counterparts in one role while very few connect to it in the
-# other role, on a monotone service. The graph is built undirected (we do not
-# infer which endpoint column is "source" without name/schema hints, deliberately
-# avoided), so this reads the *asymmetry between a value's two roles*, not a true
-# fan-out direction. It thus covers both a source that reaches many peers (a
-# spam/scan/click-fraud broadcaster) and a destination reached by many (a passive
-# fan-in hub). It complements the entity hub rule, which keys on low overall
-# diversity; this one fires even when overall diversity is high, because
-# connecting to many distinct counterparts inflates that diversity -- the
-# behaviour a diverse directional bot draws and the entity view misses. Strong,
-# like entity monotony.
+# Asymmetric high-degree SOURCE endpoint (fan-out broadcaster): a value whose
+# *out*-degree -- distinct counterparts it reaches from the source endpoint
+# column -- is unusually large while its *in*-degree (reverse role) is far smaller,
+# on a monotone service. The source column is the originating endpoint, taken by
+# schema column order (source precedes destination in flow logs: SrcAddr before
+# DstAddr, Source IP before Destination IP) -- a schema-driven signal, not a name
+# match. This is the spam/scan/click-fraud broadcaster shape (a diverse directional
+# bot reaching out to many peers), which the entity hub view misses because
+# connecting to many counterparts inflates overall diversity.
+#
+# It deliberately does NOT fire on a passive fan-IN hub (a destination reached by
+# many): a benign DNS resolver, NTP source, or load balancer is exactly that shape,
+# and on real captures (CTU-13 / Rbot) those infra hubs were the dominant false
+# positive when the rule was undirected. Fan-in command-and-control coverage is
+# owned by the direction-agnostic hub escalation in entity_monotony, not here; this
+# rule is aligned with its measured role (it fires 0 on the CICIDS fan-in C2, which
+# entity_monotony carries). Strong, like entity monotony.
 W_ASYMMETRIC_DEGREE = 0.70
 # The degree floor is data-relative, not a fixed magic count: the upper-tail
 # quantile of the *hub-subset* degrees (endpoints already reaching at least
@@ -426,10 +431,10 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
                 row_hits.append(
                     _hit(
                         "asymmetric_degree",
-                        "asymmetric high-degree endpoint",
-                        f"{col} '{value}' connects to {degree} distinct counterparts "
-                        f"in one role while only {reverse} connect to it in the "
-                        f"other, on a monotone service "
+                        "asymmetric high-degree source endpoint",
+                        f"{col} '{value}' reaches {degree} distinct counterparts "
+                        f"as a source while only {reverse} reach it back, on a "
+                        f"monotone service "
                         f"(context diversity {diversity:.2f} over {volume} events)",
                         W_ASYMMETRIC_DEGREE,
                         STRONG,
@@ -504,41 +509,49 @@ def _degree_floor(context) -> float | None:
 def _asymmetric_endpoint(
     row: int, context, degree_floor: float
 ) -> tuple[str, int, int, float, int] | None:
-    """Return the row's asymmetric high-degree endpoint, or ``None``.
+    """Return the row's asymmetric high-degree *source* endpoint, or ``None``.
 
-    A qualifying endpoint is, in some actor column, high-volume
-    (``>= ENTITY_MIN_EVENTS``), an unusually high degree
-    (``degree >= degree_floor``), strongly *asymmetric* between its two roles
-    (``degree >= DEGREE_ASYMMETRY * (reverse_degree + 1)`` -- it connects to an
-    order of magnitude more counterparts in this role than connect to it in the
-    other), and monotone in service (context-only diversity
-    ``<= ENTITY_DIVERSITY_CEILING``). The graph is undirected, so this is a
-    one-sided star in either direction (a broadcasting source or a passive fan-in
-    hub), not a verified fan-out. When several columns qualify, the highest degree
-    is chosen.
+    A qualifying endpoint is, in the **source** actor column, high-volume
+    (``>= ENTITY_MIN_EVENTS``), an unusually high *out*-degree
+    (``degree >= degree_floor``), strongly *asymmetric* -- its out-degree exceeds
+    its in-degree (reverse-role degree) by an order of magnitude
+    (``degree >= DEGREE_ASYMMETRY * (reverse + 1)``) -- and monotone in service
+    (context-only diversity ``<= ENTITY_DIVERSITY_CEILING``). This is the fan-out
+    broadcaster shape (a source reaching many distinct counterparts).
 
-    Returns ``(column, degree, reverse_degree, diversity, volume)``.
+    The source column is the originating endpoint, identified by schema column
+    order: ``context.actor_columns`` is built in schema order, and the first actor
+    endpoint column is the source (source precedes destination in flow logs --
+    ``SrcAddr`` before ``DstAddr``, ``Source IP`` before ``Destination IP``). A
+    schema-driven signal, not a name match, and not a magic constant.
+
+    It deliberately does NOT fire on a passive fan-IN hub (a high in-degree
+    destination reached by many) -- a benign DNS/NTP/load-balancer is exactly that
+    shape and dominates the false positives on real captures. Fan-in C2 coverage is
+    owned by the direction-agnostic hub escalation in ``entity_monotony``.
+
+    Returns ``(source_column, out_degree, in_degree, diversity, volume)``.
     """
 
-    best: tuple[str, int, int, float, int] | None = None
-    for col in context.actor_columns:
-        deg = context.actor_degree_by_col.get(col)
-        rev = context.actor_reverse_degree_by_col.get(col)
-        vol = context.actor_volume_by_col.get(col)
-        div = context.actor_ctx_diversity_by_col.get(col)
-        if deg is None or rev is None or vol is None or div is None:
-            continue
-        degree = int(deg[row])
-        reverse = int(rev[row])
-        if (
-            vol[row] >= ENTITY_MIN_EVENTS
-            and degree >= degree_floor
-            and degree >= DEGREE_ASYMMETRY * (reverse + 1)
-            and div[row] <= ENTITY_DIVERSITY_CEILING
-        ):
-            if best is None or degree > best[1]:
-                best = (col, degree, reverse, float(div[row]), int(vol[row]))
-    return best
+    if not context.actor_columns:
+        return None
+    source_col = context.actor_columns[0]
+    deg = context.actor_degree_by_col.get(source_col)
+    rev = context.actor_reverse_degree_by_col.get(source_col)
+    vol = context.actor_volume_by_col.get(source_col)
+    div = context.actor_ctx_diversity_by_col.get(source_col)
+    if deg is None or rev is None or vol is None or div is None:
+        return None
+    degree = int(deg[row])
+    reverse = int(rev[row])
+    if (
+        vol[row] >= ENTITY_MIN_EVENTS
+        and degree >= degree_floor
+        and degree >= DEGREE_ASYMMETRY * (reverse + 1)
+        and div[row] <= ENTITY_DIVERSITY_CEILING
+    ):
+        return (source_col, degree, reverse, float(div[row]), int(vol[row]))
+    return None
 
 
 def _eligible(

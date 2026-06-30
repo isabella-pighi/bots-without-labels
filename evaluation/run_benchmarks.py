@@ -90,11 +90,12 @@ BENCHMARKS: tuple[Benchmark, ...] = (
         absent_reason=f"binetflow {_SC3_BINETFLOW} absent",
         run=lambda: ctu13_bot_benchmark.run(_SC3_BINETFLOW),
         caveat=(
-            "generality probe (2nd family): recall 0.985 GENERALISES the "
-            "diverse-bot catch, BUT asymmetric_degree is not clean here -- it "
-            "over-fires (fire-precision 0.056 vs 1.000 on Neris), so precision "
-            "is ~0.056. The actor rule's Neris cleanliness does NOT generalise "
-            "-- a detector-generality gap, reported not tuned."
+            "generality probe (2nd family): recall 0.985 generalises the "
+            "diverse-bot catch. asymmetric_degree is now SOURCE fan-out only, so "
+            "it is clean here (1970 TP / 0 FP); precision 0.929 (the ~151 "
+            "residual FPs are ML-only). The earlier 0.056 came from the "
+            "direction-agnostic form firing on benign fan-in hubs; no thresholds "
+            "tuned. Fan-in C2 coverage lives in entity_monotony, not here."
         ),
     ),
     Benchmark(

@@ -187,12 +187,16 @@ monotony; it is the **directional asymmetry of connectivity**.
 
 ### What shipped — and what it is not
 
-The candidate began as a `directional_fanout` rule, but was deliberately reframed.
-A schema-generic detector *cannot reliably tell a source column from a destination
-column* without name or schema hints, and inferring direction from column names is
-a coupling we have intentionally avoided throughout. So the shipped rule is
-**direction-agnostic**: `asymmetric_degree`. It does **not** assert which way the
-traffic flows.
+The candidate began as a `directional_fanout` rule, and **first shipped deliberately
+direction-agnostic**. A schema-generic detector cannot reliably tell a source column
+from a destination column, and inferring direction by *parsing* column names is a
+coupling we avoid. So the first `asymmetric_degree` read the *asymmetry between a
+value's two roles* without asserting which way traffic flowed. That choice was later
+revisited: the second-family (Rbot) test below showed the direction-agnostic form
+over-fires on benign fan-in hubs, so the rule was narrowed to a **source fan-out**
+signal — see "Closing the precision gap" in that section. The mechanism described
+here is the shared graph machinery; the directional narrowing is the only part that
+changed.
 
 It builds an **undirected relational actor graph** when the log exposes stable
 actor-endpoint columns, and stays dormant when it does not (so low-dimensional
@@ -216,9 +220,12 @@ logs and the synthetic suite are unaffected):
   endpoint whose degree exceeds an **adaptive floor** (the 99th-percentile of the
   batch's own hub-subset degrees, `DEGREE_FLOOR_PERCENTILE`), **and** exceeds its
   reverse-role degree by an order of magnitude (`DEGREE_ASYMMETRY` = 10), **and**
-  is monotone in service. Because the graph is undirected, this reads the
-  *asymmetry between a value's two roles*, not a verified fan-out — so it covers
-  both a broadcasting source (spam/scan/click-fraud) **and** a passive fan-in hub.
+  is monotone in service. *Initially* — being undirected — this read the asymmetry
+  between a value's two roles and so covered both a broadcasting source
+  (spam/scan/click-fraud) **and** a passive fan-in hub. The Rbot test showed that
+  the fan-in half is where benign infrastructure lives, so the rule was later
+  narrowed to fire **only on the source/fan-out side** (see below); passive fan-in
+  hubs are now left to `entity_monotony`'s hub escalation.
 
 ### Result
 
@@ -276,13 +283,15 @@ a bot capture, the lower recall is no bot regression.
 Read this as *hypothesis-supporting evidence within one botnet family*, not a
 solved problem:
 
-- **Same-family evidence only — now partly tested on a second family.** Recall
-  1.0000 is on CTU-13 / Neris — the same family the rule was developed against. It
-  supports the hypothesis that connectivity asymmetry recovers a diverse directional
-  bot; it is **not** a general solution. A second labelled family (CTU-13 scenario 3
-  / Rbot) has since been run as a generality probe — and the result is split: the
-  **recall generalises, the precision does not**. See "The second-family test"
-  below.
+- **Same-family evidence — now tested on a second family, with a fix.** Recall
+  1.0000 is on CTU-13 / Neris — the family the rule was developed against. A second
+  labelled family (CTU-13 scenario 3 / Rbot) has since been run as a generality probe.
+  Recall generalised immediately (0.985); precision did **not** at first (0.056),
+  because the direction-agnostic rule fired on benign fan-in infrastructure too —
+  but narrowing it to the **source fan-out** shape recovered precision to **0.929**
+  with recall held. So both now generalise across the two families seen. This remains
+  CTU-13-only evidence, and fan-in generality is *guarded, not proved* — see "The
+  second-family test" below.
 - **The over-flagging that capped precision is now fixed (0.041 → 0.978).** The low
   middle-row precision came from *pre-existing broad rules* over-flagging the diverse
   NetFlow background — notably `entity_monotony` on the degenerate `Proto`/`State`
@@ -290,11 +299,12 @@ solved problem:
   those degenerate categoricals, lifting verified precision to **0.978** at a 0.033
   flag rate with recall held. This was the separate calibration question flagged
   here; it has now been addressed, not left as a standing limit.
-- **Passive fan-in hubs fire by design.** Because the rule is direction-agnostic,
-  a benign monotone server, DNS resolver, NTP source, or load balancer — a real
-  one-sided star — is an **explicit false-positive risk**. Degree asymmetry
-  narrows it; it does not eliminate it. Sub-minute timing cadence is the natural
-  next discriminator where resolution allows.
+- **Benign fan-in hubs no longer fire here (since the source fan-out narrowing).** A
+  benign monotone server, DNS resolver, NTP source or load balancer is a *fan-in*
+  star (high in-degree, low out-degree); the source-only rule does not fire on it, so
+  it is no longer an `asymmetric_degree` false-positive risk. That passive fan-in case
+  is handled by `entity_monotony` / the hub gate instead — and CICIDS is no-regression
+  evidence for that path, not proof of fan-in generality.
 - **The constants are limited-evidence guardrails, not universal constants.**
   `DEGREE_ASYMMETRY` = 10 and the 99th-percentile floor hold for asymmetry factors
   ≈ 10–100 on this one split plus a synthetic broadcaster; the rule over-fires
@@ -306,46 +316,83 @@ solved problem:
 The honest ceiling above asks for a *second labelled family* before reading the
 `asymmetric_degree` win as anything more than same-family evidence. CTU-13 scenario
 3 runs a different bot — **Rbot**, an IRC-controlled DDoS/scan botnet — captured the
-same way (Argus bidirectional NetFlow, CC-BY). Running the identical pipeline on it,
-with **no detector change**, gives a deliberately split answer:
+same way (Argus bidirectional NetFlow, CC-BY). Running the identical pipeline on it
+told a two-part story: the recall generalised straight away, the precision did not,
+and the precision gap was then closed by a targeted directional change.
 
-| Capture | recall | precision | flag rate |
-|---|---|---|---|
-| CTU-13 sc1 (Neris) | 1.000 | 0.978 | 0.033 |
-| **CTU-13 sc3 (Rbot)** | **0.985** | **0.056** | **0.567** |
+| Stage | Capture | Recall | Precision | Flag rate |
+|---|---|---|---|---|
+| (reference) | CTU-13 sc1 (Neris) | 1.000 | 0.978 | 0.033 |
+| Direction-agnostic `asymmetric_degree` | CTU-13 sc3 (Rbot) | 0.985 | 0.056 | 0.567 |
+| **+ source fan-out narrowing (current)** | **CTU-13 sc3 (Rbot)** | **0.985** | **0.929** | **0.034** |
 
 (n = 62,000 rows, base rate 0.0323. Source: CTU-Malware-Capture-Botnet-44 detailed
 bidirectional flow labels, Stratosphere Laboratory / CTU, CC-BY; a skip-if-absent
 benchmark like the others.)
 
-**The recall generalises; the precision does not.** Recall 0.985 says the
+**Recall generalised; precision first did not.** Recall 0.985 says the
 connectivity-asymmetry signal *does* recover a second, different bot family — the
-core hypothesis holds across families. But precision collapses to 0.056 at a 0.567
-flag rate: on Rbot the rule over-flags massively. The attribution is unambiguous and,
-importantly, **not** the scenario-1 story:
+core hypothesis holds across families. But the *direction-agnostic* rule's precision
+collapsed to 0.056 at a 0.567 flag rate. The attribution was unambiguous, and — note
+— **not** the scenario-1 story:
 
 - `asymmetric_degree` itself fired on **34,995** rows, carrying **1,970** true
   positives and **33,025** false positives — a stand-alone fire-precision of
-  **0.056**. The rule that was a clean 2,000/2,000-zero-FP catch on Neris is the
+  **0.056**. The rule that was a clean 2,000/2,000-zero-FP catch on Neris was the
   *direct* source of the false positives on Rbot.
-- The scenario-1 culprit is ruled out: here `entity_columns = []` (no column's
-  cardinality ratio lands in the actor band), so `entity_monotony` and the
-  `Proto`/`State` over-flagging play **no** part. This is the actor-graph rule's own
-  precision failing to transfer, not the previously-fixed degenerate-column issue
-  resurfacing.
+- The scenario-1 culprit was ruled out: `entity_monotony`'s entity columns were empty
+  here (no `Proto`/`State` over-flagging), so this was the actor-graph rule's own
+  behaviour, not the previously-fixed degenerate-column issue.
 
-**What this is — and is not.** This is a **known detector-generality gap** and a
-**regression target**: the asymmetry signal's *recall* is family-robust, but its
-near-zero-false-positive *precision* on Neris was specific to that capture's
-structure and does not carry to Rbot. It is recorded here as an honest evaluation
-finding — neither a failure to hide nor a win to overclaim. **No fix is proposed and
-no calibration is started in this work**; the precision-generality gap is logged as
-an **open follow-up** only. The protected gates are unchanged by this evaluation:
-CICIDS 0.998 / 0.846 / 0.037, CTU-13 sc1 1.000 / 0.978 / 0.033, and UNSW-NB15 0.122 /
-0.198 / 0.020 all stand.
+The root cause is structural: an **undirected** asymmetry rule cannot tell a bot's
+**fan-out** (one source → many counterparts) from benign **fan-in** infrastructure (a
+DNS resolver, NTP source or load balancer: many clients → one server). Both are
+high-degree, monotone, role-asymmetric stars. On Rbot the benign fan-in hubs vastly
+outnumber the bot, so firing on both halves floods the result with false positives.
 
-*Measured by mono (#37642); recorded as an evaluation-only finding per boss decision
-#37707.*
+### Closing the precision gap: source fan-out
+
+The fix narrows the rule to the **source / fan-out side only**. The source endpoint is
+taken by **schema column order** — source precedes destination in flow logs (`SrcAddr`
+before `DstAddr`) — *not* by parsing column names, so the name-coupling we avoid
+stays avoided; it is a positional convention, with the honest caveat that it assumes
+that ordering. `asymmetric_degree` now fires only where a value's **out**-degree
+dominates its **in**-degree (`out ≥ 10 × in`), i.e. the broadcasting-source shape. A
+benign fan-in hub is the opposite (high in-degree, low out-degree) and no longer
+trips it; that passive fan-in case is now owned by `entity_monotony`'s direction-
+agnostic hub escalation, not here.
+
+The effect on Rbot, verified end-to-end with **no detector thresholds tuned**:
+precision **0.056 → 0.929** and flag rate **0.567 → 0.034**, recall held at **0.985**.
+In attribution, `asymmetric_degree` now fires **1,970 true positives and 0 false
+positives** on Rbot — as clean as it was on Neris. The **151** false positives in the
+0.929-precision result are **ML-only** (no heuristic rule carries them); the
+actor-graph rule contributes none.
+
+### What this is — and is not
+
+- **`asymmetric_degree` is now the diverse-bot fan-out signal.** It detects a
+  broadcasting source (spam/scan/click-fraud). Recall *and* precision now generalise
+  across both CTU-13 families it has seen.
+- **Fan-in C2 coverage does not live here.** A passive fan-in star — many compromised
+  hosts beaconing one C2 — is caught by `entity_monotony` / the hub gate, *not* by
+  `asymmetric_degree`. The two rules cover the two opposite shapes.
+- **There is no real external fan-in-bot benchmark, so fan-in generality is guarded,
+  not proved.** A source-fan-out rule could in principle miss a bot that is *itself* a
+  fan-in C2. The only real labelled fan-in C2 in our data is CICIDS (many hosts →
+  `205.174.165.73`), and there the catch is carried by `entity_monotony`
+  (`asymmetric_degree` fires 0). We use CICIDS as **no-regression evidence** that the
+  fan-in case stays covered — **not** as positive proof that fan-in detection
+  generalises. No non-circular, natively-labelled fan-in-bot capture was found to test
+  that directly (absence of a benchmark is not proof the blind spot is empty).
+- **Still two scenarios of one dataset.** sc1 + sc3 are both CTU-13; this is
+  second-family evidence within that corpus, not a fully independent one.
+
+The protected gates are unchanged by this work: CICIDS 0.998 / 0.846 / 0.037, CTU-13
+sc1 1.000 / 0.978 / 0.033, and UNSW-NB15 0.122 / 0.198 / 0.020 all stand.
+
+*Original split finding measured by mono (#37642); the source-fan-out narrowing and
+its numbers verified by rina (review #38226).*
 
 ## Takeaway
 
@@ -353,9 +400,8 @@ The skeleton (unsupervised, role-driven, explainable) is sound; the gap was
 calibration plus a missing per-entity view, and a benchmark that never tested
 reality. The per-entity baseline recovered the passive fan-in bots; the relational
 hub gate removed the busy-benign point-to-point channels that diversity alone could
-not distinguish; and the undirected actor graph (`asymmetric_degree`) added the one
-shape both missed — a diverse, high-degree endpoint that is asymmetric in its
-connectivity. `tests/test_real_benchmark.py` pins the CICIDS stacked wins (recall
+not distinguish; and the actor graph (`asymmetric_degree`, now a source fan-out
+signal) added the one shape both missed — a diverse, high-degree broadcasting source. `tests/test_real_benchmark.py` pins the CICIDS stacked wins (recall
 ≥ 0.95, precision ≥ 0.35, flag rate ≤ 0.12); `tests/test_ctu13_benchmark.py` pins
 the CTU-13 recall win (≥ 0.95). The separate rule that originally capped CTU-13
 precision — `entity_monotony` over-flagging the degenerate `Proto`/`State` columns —
@@ -363,11 +409,15 @@ has since been calibrated by the actor-band entity gating, lifting verified CTU-
 precision to 0.978 with recall held. Both guards mean a future change that silently
 reintroduces a real-data blind spot fails even with the synthetic suite green.
 
-The one honest caveat the second family adds: `asymmetric_degree`'s **recall** is
-family-robust (it recovers Rbot as well as Neris), but its near-zero-false-positive
-**precision** on Neris does **not** generalise — on Rbot the same rule over-flags
-(precision 0.056). The skeleton holds; closing that precision-generality gap is the
-next open piece of work, logged but not started here.
+The second family both tested and improved `asymmetric_degree`: recall generalised to
+Rbot immediately (0.985), and once the rule was narrowed to the **source fan-out**
+shape its precision generalised too (0.056 → 0.929, recall held) — the
+direction-agnostic form had been firing on benign fan-in infrastructure. The rule is
+now the diverse-bot fan-out signal; passive fan-in C2s are covered by
+`entity_monotony` / the hub gate. The honest residual: there is no real external
+fan-in-bot benchmark, so fan-in generality is *guarded* by CICIDS no-regression (where
+`entity_monotony` carries the fan-in C2), **not positively proved**, and the evidence
+remains two CTU-13 scenarios, not an independent corpus.
 
 ## References
 
