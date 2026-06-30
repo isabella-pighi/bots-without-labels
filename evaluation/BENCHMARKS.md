@@ -46,6 +46,7 @@ comparable, like-for-like, with the bot-specific rows.
 | **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.978** | **0.033** |
 | *Generality probe —* **CTU-13 scenario 3 (Rbot)** *(second family; recall and precision now generalise after the source fan-out fix)* | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows | Yes — directional `Label`; `From-Botnet` = positive | 0.0323 | **Microsecond** → dense-timing rules **active** | actor endpoints chosen by shape | 0.985 | 0.929 | 0.034 |
 | *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` | 0.122 | 0.198 | 0.020 |
+| *Domain-transfer, provisional —* **Bournemouth Web Bot Detection** *(web-log domain; negative result; licence-pending)* | CERTH ITI / Bournemouth University (m4d.iti.gr); **licence unclear** — research-use invited, copyright reserved | Apache access logs; 58,279 rows | Yes — folder label (`bots/` vs `humans/`) | 0.029 | Per-second | `session_id` present but **below the actor band → actor rules dormant** | 0.474 | **0.020** | 0.681 |
 
 The first two rows are the **primary, bot-specific** benchmarks and are the current
 measured output on this branch. Both now hold high precision at recall ≥ 0.998
@@ -67,6 +68,13 @@ The fourth row, **UNSW-NB15**, is a **secondary** entry on a deliberately differ
 footing: it is a *broad intrusion-detection* dataset of nine mixed attack families,
 **not** a bot capture, so its modest numbers are read as a generality probe, not a
 bot-detection result — see its section below.
+
+The fifth row, **Bournemouth Web Bot Detection**, is a **web-log domain-transfer**
+probe and an honest **negative** result: precision (0.020) sits *below* the base rate
+(0.029), so on this dataset the detector does worse than chance. Its numbers are
+**provisional / local-internal**, not cleared for publication, because the dataset's
+licence is unclear (research use invited, copyright reserved). Read it as a
+domain-transfer finding, not a detector benchmark — see its section below.
 
 ### Reproduce
 
@@ -322,6 +330,24 @@ at (`FINDINGS.md` lines 8–23).
 A fair test needs a *rare*, externally-labelled attack population; the first three
 fail on majority-class, missing-label or coarse-timestamp grounds.
 
+### Dataset-pool sweep (web-bot and IDS candidates)
+
+A later sweep assessed four further candidate datasets for the pool. Two were
+**evaluated and skipped** on honesty grounds; the reasons are recorded so each skip is
+a documented decision, not a silent omission:
+
+| Source / licence | Dataset | Why skipped |
+|---|---|---|
+| Zenodo 3477932 (CC-BY-4.0) | Web Robot Detection — server logs (*web-log domain*) | The labelled files are **aggregated per-session features** with no raw entities or timestamps; the raw per-request events carry entities and timestamps but **no joinable label** (session-ids and request-ids are different id spaces, no mapping). Deriving a label from IP / user-agent / time would be **circular leakage** — the detector keys on those same fields. No honest event-level label mapping exists. |
+| AWS open-data (CSE-CIC-IDS2018) | CSE-CIC-IDS2018 botnet day (*netflow domain*) | The official processed ML CSVs are **IP-stripped** (no source/destination IP, only a bounded `Dst Port`), so the per-entity, actor-graph and monotony rules have no actor entities and stay **dormant** — it would not be a fair test of this detector. Recovering IPs would need CICFlowMeter reprocessing of the raw pcaps, out of evaluation-only scope. |
+
+The Bournemouth Web Bot Detection set (*web-log domain*) has since been **measured** —
+a provisional, licence-pending **negative** result, recorded in the registry above and
+detailed in its own section below. One further candidate, ISIT-2024 "Bits and Bots"
+(Kaggle; *web-log domain*), remains **blocked** on a one-time human competition
+rules-acceptance and is **not yet recorded**; its row will be added only once measured
+and approved.
+
 ## UNSW-NB15 shard 1/4 — secondary, broad-IDS generality probe
 
 UNSW-NB15 is now a **tracked secondary row**, with a first measured result on the
@@ -401,7 +427,70 @@ Extending the measurement across all four shards is a natural follow-up.
 
 ---
 
-## Provenance and citations
+## Bournemouth Web Bot Detection — web-log domain-transfer (provisional, negative)
+
+This is the project's first **web-log domain** measurement, and it is an honest
+**negative**. The detector was built and tuned on *network-flow* data (CICIDS, CTU-13);
+Bournemouth is raw **Apache access logs** — a different domain entirely — so this row
+asks whether any of the method transfers, and the answer is largely *no*.
+
+> **Provisional / licence-pending.** These numbers are a **local, internal**
+> evaluation result. The dataset's licence is unclear — research use is invited but
+> copyright is reserved (CERTH ITI / Bournemouth University), with no formal open
+> licence — so the figures are **not cleared for publication or redistribution**
+> pending a licence decision. The data itself is never redistributed (gitignored), and
+> the benchmark is skip-if-absent like the others.
+
+| Run | Rows | Base rate | Flag rate | Recall | Precision |
+|---|---|---|---|---|---|
+| Bournemouth Web Bot Detection | 58,279 | 0.029 | 0.681 | 0.474 | **0.020** |
+
+*Source: CERTH ITI / Bournemouth University, m4d.iti.gr (BORDaR record 272). Labels are
+dataset-provided (folder `bots/` vs `humans/`), not derived — so the ground truth is
+honest even though the result is poor. Measured locally by mono and verified by rina
+(review #38700: 96,365/96,365 log lines parsed, mix integrity 11 bot / 263 human
+sessions with zero mixed labels); no detector thresholds were tuned.*
+
+> **Qualitative evidence only — tiny positive set.** The rare-attack mix contains just
+> **11 bot sessions** (263 human). Recall 0.474 and precision 0.020 therefore rest on a
+> very small positive population: treat this as a *qualitative* domain-transfer signal
+> ("the netflow method does not transfer to web logs, and here is why"), **not** a
+> statistically robust precision/recall estimate.
+
+**How to read it — worse than chance, and why.** Precision **0.020** sits *below* the
+0.029 base rate: a flagged row is *less* likely to be a bot than a random one. Two
+things drive this, and both are domain-transfer effects, not detector regressions:
+
+- **The actor rules are dormant.** `session_id` is a real recurring entity, but its
+  cardinality ratio falls **below the actor band**, so the engine reads it as a bounded
+  categorical rather than an actor endpoint. With no in-band actor column, both
+  `entity_monotony` (per-entity baseline) and `asymmetric_degree` (actor graph) stay
+  **dormant** — the very signals that carry the netflow benchmarks never engage here.
+- **Timing over-fires on page-load bursts.** With only the timing rules and the ML path
+  left, the sub-second timing rules misread the natural **burst of near-simultaneous
+  requests a single web page-load generates** as automated cadence, so the detector
+  flags 68% of rows and precision collapses.
+
+**What this is — and is not.** It is a clean **domain-transfer negative**: a
+netflow-tuned detector does not transfer to web-server logs out of the box, because its
+actor signals need an in-band actor entity (absent here) and its timing rules assume
+flow cadence, not page-load bursts. It is **not** evidence the method is broken on its
+own domain — the netflow gates are unchanged (CICIDS 0.998 / 0.846 / 0.037, CTU-13 sc1
+1.000 / 0.978 / 0.033, sc3 0.985 / 0.929 / 0.034, UNSW 0.122 / 0.198 / 0.020) — and it
+is **not** a fraud verdict. It is recorded because an honest registry shows where the
+method *fails* to transfer, not only where it works.
+
+Reproduce (the dataset is gitignored and licence-pending, so this is local/manual):
+
+```bash
+# place the dataset zip at data/web_bot_detection_dataset.zip, then:
+uv run --extra eif python -m evaluation.bournemouth_benchmark
+```
+
+The combined runner also carries it as `uv run --extra eif python -m
+evaluation.run_benchmarks --only bournemouth`. Like the other benchmarks,
+`evaluation/bournemouth_benchmark.py` is **skip-if-absent** when the dataset is not
+present locally.
 
 Dataset files are **not** redistributed in this repository; download them from the
 sources below.

@@ -394,6 +394,33 @@ sc1 1.000 / 0.978 / 0.033, and UNSW-NB15 0.122 / 0.198 / 0.020 all stand.
 *Original split finding measured by mono (#37642); the source-fan-out narrowing and
 its numbers verified by rina (review #38226).*
 
+## Domain transfer: web-server logs (Bournemouth)
+
+Everything above is *network-flow* data. The first test on a **different domain** —
+raw Apache access logs (Bournemouth Web Bot Detection) — is an honest **negative**, and
+recording it matters as much as the wins. On 58,279 rows (base rate 0.029, real
+folder-provided `bots/` vs `humans/` labels) the detector scored recall 0.474 and
+precision **0.020** — *below* the base rate, i.e. worse than chance. Two domain-transfer
+effects explain it, neither a detector regression:
+
+- **The actor rules went dormant.** `session_id` is a real recurring entity, but its
+  cardinality ratio falls *below* the actor band, so it is read as a bounded categorical
+  rather than an actor endpoint. With no in-band actor column, both `entity_monotony`
+  and `asymmetric_degree` — the signals that carry the netflow benchmarks — never
+  engaged.
+- **Timing over-fired on page-load bursts.** Left with only timing + the ML path, the
+  sub-second timing rules misread the burst of near-simultaneous requests from a single
+  web page-load as automated cadence, flagging 68% of rows.
+
+So the netflow-tuned method does not transfer to web logs out of the box: its actor
+signals need an in-band actor entity (absent here) and its timing rules assume flow
+cadence, not page-load bursts. No detector thresholds were tuned for this. Two honest
+limits: the positive set is **tiny — only 11 bot sessions** (263 human), so this is
+*qualitative* domain-transfer evidence, not a robust precision/recall estimate; and the
+numbers are **provisional / local-internal** pending a licence decision (research use
+invited, copyright reserved). The netflow gates are unchanged. *Measured by mono,
+verified by rina (#38700); see `evaluation/BENCHMARKS.md` for the full row and caveats.*
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was

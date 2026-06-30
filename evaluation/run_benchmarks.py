@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from evaluation import (
+    bournemouth_benchmark,
     cicids_bot_benchmark,
     ctu13_bot_benchmark,
     unsw_benchmark,
@@ -112,6 +113,23 @@ BENCHMARKS: tuple[Benchmark, ...] = (
             "incidental coverage dropped; current recall 0.122 is not a bot "
             "regression and precision 0.198 is above prevalence on shard 1 "
             "but not a bot-detection win."
+        ),
+    ),
+    Benchmark(
+        key="bournemouth",
+        title="Bournemouth Web Bot (web logs)",
+        tier="secondary",
+        present=lambda: bournemouth_benchmark.DEFAULT_ZIP.exists(),
+        absent_reason=f"{bournemouth_benchmark.DEFAULT_ZIP} absent",
+        run=bournemouth_benchmark.run,
+        caveat=(
+            "web-log DOMAIN-TRANSFER check (HTTP access logs, not NetFlow), "
+            "clean folder labels. NEGATIVE transfer: precision ~0.02 is BELOW "
+            "the ~0.03 base rate. Session entity + actor graph are DORMANT "
+            "(web session-id ratio ~0.005 falls below the actor band), so only "
+            "timing+ML run and timing over-fires on dense page-load bursts. A "
+            "real domain limit, not tuned. Licence: research-use, not formally "
+            "specified -- numbers internal pending confirmation."
         ),
     ),
 )
