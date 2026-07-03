@@ -48,15 +48,19 @@ same wrapper to test whether the diverse-bot win generalises beyond Neris:
 from __future__ import annotations
 
 import argparse
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from bots_without_labels.evaluate import evaluate_injection
-from bots_without_labels.ingest import load
-from bots_without_labels.pipeline import HEURISTIC_CUTOFF, detect
+from bots_without_labels.pipeline import HEURISTIC_CUTOFF
+
+from evaluation.harness import (
+    DEFAULT_SEED,
+    add_mix_size_arguments,
+    format_report,
+    score_mix,
+)
 
 # CTU-13 scenarios share the Argus directional-label format, so a single
 # build_mix/run handles any of them -- only the capture file and its provenance
@@ -98,7 +102,7 @@ NEGATIVE_PREFIXES = (
 # intractably large benign pool.
 N_BOT = 2_000
 N_BENIGN = 60_000
-SEED = 7
+SEED = DEFAULT_SEED
 
 
 def _normalised_labels(frame: pd.DataFrame) -> pd.Series:
@@ -149,16 +153,7 @@ def run(
     """Build the mix, run detection through the real loader, return metrics."""
 
     frame, truth = build_mix(path, n_bot=n_bot, n_benign=n_benign, seed=seed)
-    with tempfile.TemporaryDirectory() as tmp:
-        csv_path = Path(tmp) / "ctu13_bot_mix.csv"
-        frame.to_csv(csv_path, index=False)
-        loaded = load(csv_path)
-    result = detect(loaded.frame, loaded.schema)
-
-    report = evaluate_injection(result.is_bot, truth)
-    report["flag_rate"] = float(np.mean(result.is_bot))
-    report["base_rate"] = float(np.mean(truth))
-    report["n_rows"] = int(len(truth))
+    result, report = score_mix(frame, truth, mix_name="ctu13_bot_mix")
     report["heuristic_flag_rate"] = float(np.mean(result.heuristic >= HEURISTIC_CUTOFF))
     report["ml_flag_rate"] = float(np.mean(result.ml_scores > result.ml_threshold))
     # The data property this benchmark turns on: the detected timestamp grid (the
@@ -203,8 +198,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="explicit binetflow path (overrides --scenario)",
     )
-    parser.add_argument("--bot", type=int, default=N_BOT)
-    parser.add_argument("--benign", type=int, default=N_BENIGN)
+    add_mix_size_arguments(
+        parser,
+        bot_default=N_BOT,
+        bot_help="botnet flows to slice (contiguous, cadence-preserving)",
+        benign_default=N_BENIGN,
+        seed_default=SEED,
+    )
     args = parser.parse_args(argv)
 
     if args.binetflow is not None:
@@ -212,22 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         path = SCENARIOS[args.scenario]["binetflow"]
     label = _scenario_label(args.scenario, args.binetflow)
-    report = run(path, n_bot=args.bot, n_benign=args.benign)
-    grid = report["timestamp_grid_seconds"]
-    print(f"CTU-13 {label} fine-resolution benchmark")
-    print(f"  rows                {report['n_rows']:>10d}")
-    print(f"  base rate           {report['base_rate']:>10.4f}")
-    print(
-        f"  timestamp grid (s)  {grid:>10.6f}"
-        if grid is not None
-        else "  timestamp grid (s)        none"
-    )
-    print(f"  dense-timing gated  {str(report['dense_timing_gated']):>10}")
-    print(f"  flag rate           {report['flag_rate']:>10.4f}")
-    print(f"    heuristic         {report['heuristic_flag_rate']:>10.4f}")
-    print(f"    ml                {report['ml_flag_rate']:>10.4f}")
-    print(f"  recall              {report['recall']:>10.4f}")
-    print(f"  precision           {report['planted_precision']:>10.4f}")
+    report = run(path, n_bot=args.bot, n_benign=args.benign, seed=args.seed)
+    print(format_report(f"CTU-13 {label} fine-resolution benchmark", report))
     return 0
 
 

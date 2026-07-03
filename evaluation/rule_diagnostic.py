@@ -185,8 +185,18 @@ def _print(report: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="rule_diagnostic")
-    parser.add_argument("--zip", type=Path, default=DEFAULT_ZIP)
-    parser.add_argument("--benign", type=int, default=N_BENIGN)
+    parser.add_argument(
+        "--zip",
+        type=Path,
+        default=DEFAULT_ZIP,
+        help="path to the CICIDS GeneratedLabelledFlows.zip archive",
+    )
+    parser.add_argument(
+        "--benign",
+        type=int,
+        default=N_BENIGN,
+        help="benign rows to sample as the background",
+    )
     args = parser.parse_args(argv)
     _print(run(args.zip, n_benign=args.benign))
     return 0

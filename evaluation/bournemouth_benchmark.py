@@ -54,16 +54,17 @@ from __future__ import annotations
 
 import argparse
 import re
-import tempfile
 import zipfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from bots_without_labels.evaluate import evaluate_injection
-from bots_without_labels.ingest import load
-from bots_without_labels.pipeline import detect
+from evaluation.harness import (
+    DEFAULT_SEED,
+    add_mix_size_arguments,
+    format_report,
+    score_mix,
+)
 
 DEFAULT_ZIP = Path("data/web_bot_detection_dataset.zip")
 BOT_PREFIX = "phase1/data/web_logs/bots/"
@@ -73,8 +74,10 @@ LOG_RE = re.compile(
     r'^(\S+) (\S+) \[([^\]]+)\] "([^"]*)" (\S+) (\S+) "([^"]*)" (\S+) "([^"]*)"$'
 )
 TIME_FMT = "%d/%b/%Y:%H:%M:%S %z"
+# Bot requests sampled (as whole sessions) for a rare-attack base rate against
+# the full ~57.5k-request human background.
 N_BOT = 1_800
-SEED = 7
+SEED = DEFAULT_SEED
 
 
 def parse_line(line: str) -> dict | None:
@@ -160,23 +163,24 @@ def run(zip_path: Path = DEFAULT_ZIP, *, n_bot: int = N_BOT, seed: int = SEED):
     """Build the mix, run detection through the real loader, return metrics."""
 
     frame, truth = build_mix(zip_path, n_bot=n_bot, seed=seed)
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "bournemouth_mix.csv"
-        frame.to_csv(path, index=False)
-        loaded = load(path)
-    result = detect(loaded.frame, loaded.schema)
-
-    report = evaluate_injection(result.is_bot, truth)
-    report["flag_rate"] = float(np.mean(result.is_bot))
-    report["base_rate"] = float(np.mean(truth))
-    report["n_rows"] = int(len(truth))
+    _, report = score_mix(frame, truth, mix_name="bournemouth_mix")
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bournemouth_benchmark")
-    parser.add_argument("--zip", type=Path, default=DEFAULT_ZIP)
-    parser.add_argument("--bot", type=int, default=N_BOT)
+    parser.add_argument(
+        "--zip",
+        type=Path,
+        default=DEFAULT_ZIP,
+        help="path to the web_bot_detection_dataset.zip archive",
+    )
+    add_mix_size_arguments(
+        parser,
+        bot_default=N_BOT,
+        bot_help="approximate bot requests to include (whole sessions)",
+        seed_default=SEED,
+    )
     args = parser.parse_args(argv)
 
     if not args.zip.exists():
@@ -186,17 +190,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    report = run(args.zip, n_bot=args.bot)
-    print("Bournemouth Web Bot Detection (web-log domain-transfer)")
-    print(f"  rows         {report['n_rows']:>8d}")
-    print(f"  base rate    {report['base_rate']:>8.3f}")
-    print(f"  flag rate    {report['flag_rate']:>8.3f}")
-    print(f"  recall       {report['recall']:>8.3f}")
-    print(f"  precision    {report['planted_precision']:>8.3f}")
+    report = run(args.zip, n_bot=args.bot, seed=args.seed)
     print(
-        "  note: web-log domain-transfer; session entity + actor graph DORMANT "
-        "(session ratio below the actor band), timing+ML only; licence "
-        "research-use (not formally specified)"
+        format_report(
+            "Bournemouth Web Bot Detection (web-log domain-transfer)",
+            report,
+            notes=(
+                "web-log domain-transfer; session entity + actor graph DORMANT "
+                "(session ratio below the actor band), timing+ML only; licence "
+                "research-use (not formally specified)",
+            ),
+        )
     )
     return 0
 

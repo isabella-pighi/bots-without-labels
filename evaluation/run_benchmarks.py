@@ -54,6 +54,10 @@ class Benchmark:
     caveat: str
 
 
+# The ``lambda: module.attr...`` wrappers are deliberate, not redundant: they
+# defer the attribute lookup to call time, so tests can monkeypatch the
+# benchmark modules (e.g. ``present_shards``) and the registry sees the patch.
+# pylint: disable=unnecessary-lambda
 BENCHMARKS: tuple[Benchmark, ...] = (
     Benchmark(
         key="cicids2017",
@@ -133,6 +137,7 @@ BENCHMARKS: tuple[Benchmark, ...] = (
         ),
     ),
 )
+# pylint: enable=unnecessary-lambda
 
 
 def _format_table(rows: list[dict]) -> str:

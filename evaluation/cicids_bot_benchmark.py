@@ -21,21 +21,29 @@ from __future__ import annotations
 
 import argparse
 import io
-import tempfile
 import zipfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from bots_without_labels.evaluate import evaluate_injection
-from bots_without_labels.ingest import load
-from bots_without_labels.pipeline import detect
+from evaluation.harness import (
+    DEFAULT_SEED,
+    add_mix_size_arguments,
+    format_report,
+    score_mix,
+)
 
+# Path of the labelled Friday-morning capture inside the archive. The leading
+# space in "TrafficLabelling " is IN the upstream zip, not a typo here.
 BOT_FILE = "TrafficLabelling /Friday-WorkingHours-Morning.pcap_ISCX.csv"
 DEFAULT_ZIP = Path("data/GeneratedLabelledFlows.zip")
+LABEL_COLUMN = "Label"
+TIME_COLUMN = "Timestamp"
+POSITIVE_LABEL = "Bot"
+NEGATIVE_LABEL = "BENIGN"
+# Benign sample sized for a ~3% rare-attack base rate against the ~2k bot flows.
 N_BENIGN = 60_000
-SEED = 7
+SEED = DEFAULT_SEED
 
 
 def build_mix(zip_path: Path, *, n_benign: int = N_BENIGN, seed: int = SEED):
@@ -47,20 +55,24 @@ def build_mix(zip_path: Path, *, n_benign: int = N_BENIGN, seed: int = SEED):
 
     with zipfile.ZipFile(zip_path) as archive:
         raw = archive.read(BOT_FILE)
+    # latin-1 + skipinitialspace: the upstream export carries stray high bytes
+    # and space-padded headers.
     df = pd.read_csv(
         io.BytesIO(raw), encoding="latin-1", low_memory=False, skipinitialspace=True
     )
     df.columns = [c.strip() for c in df.columns]
-    df["Label"] = df["Label"].astype(str).str.strip()
+    df[LABEL_COLUMN] = df[LABEL_COLUMN].astype(str).str.strip()
 
-    bot = df[df["Label"] == "Bot"]
-    benign = df[df["Label"] == "BENIGN"].sample(n=n_benign, random_state=seed)
+    bot = df[df[LABEL_COLUMN] == POSITIVE_LABEL]
+    benign = df[df[LABEL_COLUMN] == NEGATIVE_LABEL].sample(
+        n=n_benign, random_state=seed
+    )
     mix = pd.concat([benign, bot])
-    mix["_ts"] = pd.to_datetime(mix["Timestamp"], errors="coerce")
+    mix["_ts"] = pd.to_datetime(mix[TIME_COLUMN], errors="coerce")
     mix = mix.sort_values("_ts").drop(columns=["_ts"]).reset_index(drop=True)
 
-    truth = (mix["Label"] != "BENIGN").to_numpy().astype(int)
-    frame = mix.drop(columns=["Label"])
+    truth = (mix[LABEL_COLUMN] != NEGATIVE_LABEL).to_numpy().astype(int)
+    frame = mix.drop(columns=[LABEL_COLUMN])
     return frame, truth
 
 
@@ -68,31 +80,23 @@ def run(zip_path: Path = DEFAULT_ZIP, *, n_benign: int = N_BENIGN, seed: int = S
     """Build the mix, run detection through the real loader, return metrics."""
 
     frame, truth = build_mix(zip_path, n_benign=n_benign, seed=seed)
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "cicids_bot_mix.csv"
-        frame.to_csv(path, index=False)
-        loaded = load(path)
-    result = detect(loaded.frame, loaded.schema)
-    report = evaluate_injection(result.is_bot, truth)
-    report["flag_rate"] = float(np.mean(result.is_bot))
-    report["base_rate"] = float(np.mean(truth))
-    report["n_rows"] = int(len(truth))
+    _, report = score_mix(frame, truth, mix_name="cicids_bot_mix")
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cicids_bot_benchmark")
-    parser.add_argument("--zip", type=Path, default=DEFAULT_ZIP)
-    parser.add_argument("--benign", type=int, default=N_BENIGN)
+    parser.add_argument(
+        "--zip",
+        type=Path,
+        default=DEFAULT_ZIP,
+        help="path to the GeneratedLabelledFlows.zip archive",
+    )
+    add_mix_size_arguments(parser, benign_default=N_BENIGN, seed_default=SEED)
     args = parser.parse_args(argv)
 
-    report = run(args.zip, n_benign=args.benign)
-    print("CICIDS2017 botnet benchmark")
-    print(f"  rows         {report['n_rows']:>8d}")
-    print(f"  base rate    {report['base_rate']:>8.3f}")
-    print(f"  flag rate    {report['flag_rate']:>8.3f}")
-    print(f"  recall       {report['recall']:>8.3f}")
-    print(f"  precision    {report['planted_precision']:>8.3f}")
+    report = run(args.zip, n_benign=args.benign, seed=args.seed)
+    print(format_report("CICIDS2017 botnet benchmark", report))
     return 0
 
 
