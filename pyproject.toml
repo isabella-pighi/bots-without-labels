@@ -39,9 +39,27 @@ include = ["bots_without_labels*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.black]
+line-length = 88
+
+[tool.pylint.format]
+max-line-length = 88
+
 [tool.pylint."messages control"]
 # Test names carry behaviour intent in this project; requiring docstrings on
 # every test function creates boilerplate rather than useful documentation.
+# The design-metric checks (too-many-*) are disabled as in Google's published
+# pylintrc: the pipeline's orchestrator functions are deliberately long and
+# comment-heavy rather than fragmented into single-use helpers.
 disable = [
     "missing-function-docstring",
+    "superfluous-parens",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-branches",
+    "too-many-instance-attributes",
+    "too-many-locals",
+    "too-many-positional-arguments",
+    "too-many-return-statements",
+    "too-many-statements",
 ]

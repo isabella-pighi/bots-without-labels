@@ -45,15 +45,16 @@ committed; this wrapper only ever writes a temporary mix file.
 from __future__ import annotations
 
 import argparse
-import tempfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from bots_without_labels.evaluate import evaluate_injection
-from bots_without_labels.ingest import load
-from bots_without_labels.pipeline import detect
+from evaluation.harness import (
+    DEFAULT_SEED,
+    add_mix_size_arguments,
+    format_report,
+    score_mix,
+)
 
 # The raw shards are headerless; these are the canonical 49 column names from
 # the dataset's NUSW-NB15_features.csv, in order. We apply them only when a
@@ -119,7 +120,7 @@ TIME_COLUMN = "Stime"
 # attacks too.
 N_ATTACK = 2_000
 N_BENIGN = 60_000
-SEED = 7
+SEED = DEFAULT_SEED
 
 
 def present_shards(shards: tuple[Path, ...] = DEFAULT_SHARDS) -> list[Path]:
@@ -205,23 +206,20 @@ def run(
         n_benign=n_benign,
         seed=seed,
     )
-    with tempfile.TemporaryDirectory() as tmp:
-        csv_path = Path(tmp) / "unsw_mix.csv"
-        frame.to_csv(csv_path, index=False)
-        loaded = load(csv_path)
-    result = detect(loaded.frame, loaded.schema)
-
-    report = evaluate_injection(result.is_bot, truth)
-    report["flag_rate"] = float(np.mean(result.is_bot))
-    report["base_rate"] = float(np.mean(truth))
-    report["n_rows"] = int(len(truth))
+    _, report = score_mix(frame, truth, mix_name="unsw_mix")
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="unsw_benchmark")
-    parser.add_argument("--attack", type=int, default=N_ATTACK)
-    parser.add_argument("--benign", type=int, default=N_BENIGN)
+    add_mix_size_arguments(
+        parser,
+        bot_flag="--attack",
+        bot_default=N_ATTACK,
+        bot_help="attack flows to slice (contiguous, cadence-preserving)",
+        benign_default=N_BENIGN,
+        seed_default=SEED,
+    )
     args = parser.parse_args(argv)
 
     if not present_shards():
@@ -230,14 +228,14 @@ def main(argv: list[str] | None = None) -> int:
         print("  see docstring for sourcing; HF mirrors are unusable")
         return 0
 
-    report = run(n_attack=args.attack, n_benign=args.benign)
-    print("UNSW-NB15 (broad IDS, secondary breadth check)")
-    print(f"  rows         {report['n_rows']:>8d}")
-    print(f"  base rate    {report['base_rate']:>8.3f}")
-    print(f"  flag rate    {report['flag_rate']:>8.3f}")
-    print(f"  recall       {report['recall']:>8.3f}")
-    print(f"  precision    {report['planted_precision']:>8.3f}")
-    print("  note: broad IDS, not bot-specific -- not a tracked bot result")
+    report = run(n_attack=args.attack, n_benign=args.benign, seed=args.seed)
+    print(
+        format_report(
+            "UNSW-NB15 (broad IDS, secondary breadth check)",
+            report,
+            notes=("broad IDS, not bot-specific -- not a tracked bot result",),
+        )
+    )
     return 0
 
 
