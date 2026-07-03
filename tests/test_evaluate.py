@@ -2,31 +2,49 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bots_without_labels.evaluate import evaluate_injection
 
 
-def test_overall_metrics() -> None:
-    planted = [1, 1, 1, 1, 0, 0, 0, 0]
-    predictions = [1, 1, 1, 0, 1, 0, 0, 0]  # 3 of 4 planted found, 1 false positive
-    report = evaluate_injection(predictions, planted)
-    assert report["planted"] == 4
-    assert report["recovered"] == 3
-    assert report["flagged"] == 4
-    assert report["recall"] == 0.75
-    assert report["planted_precision"] == 0.75
-
-
-def test_per_archetype_breakdown() -> None:
-    planted = [1, 1, 1, 1]
-    predictions = [1, 0, 1, 1]
-    archetypes = ["burst", "burst", "drip", "drip"]
+@pytest.mark.parametrize(
+    ("predictions", "planted", "archetypes", "expected"),
+    [
+        pytest.param(
+            [1, 1, 1, 0, 1, 0, 0, 0],  # 3 of 4 planted found, 1 false positive
+            [1, 1, 1, 1, 0, 0, 0, 0],
+            None,
+            {
+                "planted": 4,
+                "recovered": 3,
+                "flagged": 4,
+                "recall": 0.75,
+                "planted_precision": 0.75,
+            },
+            id="overall-metrics",
+        ),
+        pytest.param(
+            [1, 0, 1, 1],
+            [1, 1, 1, 1],
+            ["burst", "burst", "drip", "drip"],
+            {
+                "per_archetype": {
+                    "burst": {"planted": 2, "recovered": 1, "recall": 0.5},
+                    "drip": {"planted": 2, "recovered": 2, "recall": 1.0},
+                }
+            },
+            id="per-archetype-breakdown",
+        ),
+        pytest.param(
+            [0, 1, 0],
+            [0, 0, 0],
+            None,
+            {"planted": 0, "recall": 0.0},
+            id="no-planted-bots",
+        ),
+    ],
+)
+def test_evaluate_injection_reports(predictions, planted, archetypes, expected) -> None:
     report = evaluate_injection(predictions, planted, archetypes)
-    per = report["per_archetype"]
-    assert per["burst"] == {"planted": 2, "recovered": 1, "recall": 0.5}
-    assert per["drip"] == {"planted": 2, "recovered": 2, "recall": 1.0}
-
-
-def test_no_planted_bots() -> None:
-    report = evaluate_injection([0, 1, 0], [0, 0, 0])
-    assert report["planted"] == 0
-    assert report["recall"] == 0.0
+    for key, value in expected.items():
+        assert report[key] == value, f"{key}: {report}"

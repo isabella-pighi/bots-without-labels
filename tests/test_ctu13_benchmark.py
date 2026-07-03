@@ -40,6 +40,7 @@ from pathlib import Path
 import pytest
 
 from evaluation.ctu13_bot_benchmark import DEFAULT_BINETFLOW, run
+from tests.conftest import assert_ctu13_rare_attack_recall
 
 pytestmark = pytest.mark.skipif(
     not Path(DEFAULT_BINETFLOW).exists(),
@@ -53,20 +54,7 @@ pytestmark = pytest.mark.skipif(
 def test_ctu13_mix_is_fine_resolution_rare_attack() -> None:
     report = run()
 
-    # The intended rare-attack mix shape.
-    assert report["n_rows"] == 62_000, report
-    assert 0.02 <= report["base_rate"] <= 0.05, report
-
-    # The premise: CTU-13 timestamps are sub-second, so the dense-timing rules are
-    # NOT gated off as a coarse-grid artifact (contrast CICIDS, grid 60s, gated).
-    grid = report["timestamp_grid_seconds"]
-    assert grid is not None, report
-    assert grid < 1.0, report  # sub-second; CICIDS is 60.0
-    assert report["dense_timing_gated"] is False, report
-
-    # The actor-graph rule recovers the diverse directional bot. We pin recall
-    # (the win) but not overall precision -- a separate rule's over-flagging caps
-    # it on this capture; see the module docstring.
-    assert report["recall"] >= 0.95, report
-    for key in ("recall", "planted_precision", "flag_rate"):
-        assert 0.0 <= report[key] <= 1.0, report
+    # Mix shape, sub-second premise (contrast CICIDS: grid 60s, gated), and the
+    # recall win. Precision is deliberately not pinned -- a separate rule's
+    # over-flagging caps it on this capture; see the module docstring.
+    assert_ctu13_rare_attack_recall(report)

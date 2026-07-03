@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 from bots_without_labels.features import build_features
 from bots_without_labels.ingest import load
-from bots_without_labels.rules import apply_rules
+from bots_without_labels.pipeline import HEURISTIC_CUTOFF
+
+# The private imports are deliberate: the symmetric-peer case is a unit test of
+# the rule internals on a hand-built context.
+from bots_without_labels.rules import _asymmetric_endpoint, _degree_floor, apply_rules
 from bots_without_labels.synthetic import (
     ARCHETYPES,
     DETECTABLE_ARCHETYPES,
@@ -46,69 +51,47 @@ def test_detectable_archetypes_clear_the_cutoff(tmp_path: Path) -> None:
     for name in DETECTABLE_ARCHETYPES:
         rows = np.where(archetypes == name)[0]
         median = float(np.median(result.scores[rows]))
-        assert median >= 0.70, f"{name} median heuristic {median:.2f} below cutoff"
+        assert (
+            median >= HEURISTIC_CUTOFF
+        ), f"{name} median heuristic {median:.2f} below cutoff"
     for name in (a for a in ARCHETYPES if a not in DETECTABLE_ARCHETYPES):
         rows = np.where(archetypes == name)[0]
         median = float(np.median(result.scores[rows]))
         assert (
-            median < 0.70
+            median < HEURISTIC_CUTOFF
         ), f"{name} median heuristic {median:.2f} should stay below cutoff"
 
 
 def test_legitimate_traffic_scores_low(tmp_path: Path) -> None:
     log, result = _scored(tmp_path)
     legit = np.where(np.array([a is None for a in log.archetype]))[0]
-    assert float(np.median(result.scores[legit])) < 0.70
-    assert float((result.scores[legit] >= 0.70).mean()) < 0.05
+    assert float(np.median(result.scores[legit])) < HEURISTIC_CUTOFF
+    assert float((result.scores[legit] >= HEURISTIC_CUTOFF).mean()) < 0.05
 
 
 def test_flagged_rows_carry_reasons(tmp_path: Path) -> None:
     _, result = _scored(tmp_path)
     reasons = result.reasons()
-    for row in range(len(result.scores)):
-        if result.scores[row] >= 0.70:
+    for row, score in enumerate(result.scores):
+        if score >= HEURISTIC_CUTOFF:
             assert reasons[row], "a flagged row must have at least one reason"
 
 
-def _network_log(path: Path, *, n_fill: int = 40) -> Path:
-    """A flow-like CSV with a hub, a point-to-point channel, and filler traffic.
-
-    See ``tests.test_features._network_log`` for the structure; both behaviours
-    are exercised here through the rule detector.
-    """
-
-    n_pay = 12
-    header = "src,dst," + ",".join(f"p{i}" for i in range(n_pay))
-    rows = [header]
-    zero = ",".join(["0"] * n_pay)
-    for source in range(4):
-        for _ in range(8):
-            rows.append(f"s{source},c2hub,{zero}")
-        for j in range(10):
-            payload = ",".join(str(j * n_fill * 13 + source + k * 101) for k in range(n_pay))
-            rows.append(f"s{source},benign{j % 5},{payload}")
-    for _ in range(20):
-        rows.append(f"backup,store,{zero}")
-    for host in range(n_fill):
-        for j in range(12):
-            payload = ",".join(str(j * n_fill * 13 + host + k * 101) for k in range(n_pay))
-            rows.append(f"f{host},fd{host},{payload}")
-    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
-    return path
-
-
 def _fired(result, rule_id, rows):
+    """Per-row boolean array: did ``rule_id`` fire on each of ``rows``?"""
     return np.array(
         [any(hit.rule_id == rule_id for hit in result.hits[row]) for row in rows]
     )
 
 
-def test_entity_monotony_escalates_only_for_a_hub(tmp_path: Path) -> None:
+def test_entity_monotony_escalates_only_for_a_hub(
+    tmp_path: Path, network_log_factory
+) -> None:
     """With a source/destination structure, a monotonous entity escalates only
     when it is a relational hub. A monotonous *point-to-point* channel -- equally
     low-diversity but with a single counterpart -- must stay below the cutoff."""
 
-    log = load(_network_log(tmp_path / "net.csv"))
+    log = load(network_log_factory(tmp_path / "net.csv"))
     feature_set = build_features(log.frame, log.schema)
     result = apply_rules(log.frame, log.schema, feature_set)
 
@@ -120,7 +103,7 @@ def test_entity_monotony_escalates_only_for_a_hub(tmp_path: Path) -> None:
 
     hub_rows = np.where(dst == "c2hub")[0]
     assert _fired(result, "entity_monotony", hub_rows).all()
-    assert (result.scores[hub_rows] >= 0.70).all()
+    assert (result.scores[hub_rows] >= HEURISTIC_CUTOFF).all()
     hub_reason = next(
         hit.reason
         for hit in result.hits[hub_rows[0]]
@@ -130,7 +113,7 @@ def test_entity_monotony_escalates_only_for_a_hub(tmp_path: Path) -> None:
 
     channel_rows = np.where((src == "backup") & (dst == "store"))[0]
     assert not _fired(result, "entity_monotony", channel_rows).any()
-    assert (result.scores[channel_rows] < 0.70).all()
+    assert (result.scores[channel_rows] < HEURISTIC_CUTOFF).all()
 
 
 def test_entity_monotony_falls_back_without_relational_structure(
@@ -159,7 +142,7 @@ def test_entity_monotony_falls_back_without_relational_structure(
     actor = log.frame["actor"].astype(str).to_numpy()
     bot_rows = np.where(actor == "botactor")[0]
     assert _fired(result, "entity_monotony", bot_rows).all()
-    assert (result.scores[bot_rows] >= 0.70).all()
+    assert (result.scores[bot_rows] >= HEURISTIC_CUTOFF).all()
 
 
 def _timing_result(tmp_path: Path, timestamps: list[str], name: str):
@@ -184,6 +167,7 @@ def _timing_result(tmp_path: Path, timestamps: list[str], name: str):
 
 
 def _rule_ids(result) -> set[str]:
+    """All rule IDs that fired on any row of the result."""
     return {hit.rule_id for row in result.hits for hit in row}
 
 
@@ -297,20 +281,6 @@ def test_dense_timing_grid_is_robust_to_one_small_gap(tmp_path: Path) -> None:
     assert not _fired(result, "local_burst", on_grid_rows).any()
 
 
-def _broadcaster_log(path: Path) -> Path:
-    """An asymmetric high-degree source plus benign point-to-point clients."""
-
-    rows = ["src,dst,svc"]
-    for i in range(90):
-        rows.append(f"10.0.0.1,10.9.{i // 256}.{i % 256},smtp")
-    for c in range(60):
-        server = "10.0.0.250" if c % 2 == 0 else "10.0.0.251"
-        for _ in range(12):
-            rows.append(f"10.0.1.{c},{server},https")
-    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
-    return path
-
-
 def _passive_fanin_log(path: Path) -> Path:
     """A passive fan-IN hub: many distinct clients reach one server on a monotone
     service, and the server never appears as a source. The asymmetry is identical
@@ -334,9 +304,11 @@ def _passive_fanin_log(path: Path) -> Path:
     return path
 
 
-def test_asymmetric_degree_fires_on_star_only(tmp_path: Path) -> None:
+def test_asymmetric_degree_fires_on_star_only(
+    tmp_path: Path, broadcaster_log_factory
+) -> None:
     path = tmp_path / "bcast.csv"
-    loaded = load(_broadcaster_log(path))
+    loaded = load(broadcaster_log_factory(path))
     fs = build_features(loaded.frame, loaded.schema)
     result = apply_rules(loaded.frame, loaded.schema, fs)
 
@@ -347,7 +319,7 @@ def test_asymmetric_degree_fires_on_star_only(tmp_path: Path) -> None:
     assert result.thresholds["actor_graph_active"] is True
     # The high-degree source star carries the rule and clears the cutoff.
     assert _fired(result, "asymmetric_degree", star_rows).all()
-    assert all(result.scores[row] >= 0.70 for row in star_rows)
+    assert all(result.scores[row] >= HEURISTIC_CUTOFF for row in star_rows)
     # Benign point-to-point clients never trigger it.
     assert not _fired(result, "asymmetric_degree", client_rows).any()
 
@@ -391,10 +363,6 @@ def test_asymmetric_degree_dormant_without_endpoints(tmp_path: Path) -> None:
 def test_asymmetric_degree_skips_symmetric_peer() -> None:
     # A node high in BOTH roles (a server/peer reached as much as it reaches) is
     # not asymmetric: the order-of-magnitude test must exclude it past the floor.
-    from types import SimpleNamespace
-
-    from bots_without_labels.rules import _asymmetric_endpoint, _degree_floor
-
     # Two nodes at degree 100: a one-sided star (reverse 0) and a peer (reverse 100).
     ctx = SimpleNamespace(
         actor_columns=["src"],

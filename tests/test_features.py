@@ -107,40 +107,12 @@ def test_build_is_deterministic(tmp_path: Path) -> None:
     assert np.array_equal(first.matrix, second.matrix)
 
 
-def _network_log(path: Path, *, n_fill: int = 40) -> Path:
-    """A flow-like CSV with two entity columns (``src``/``dst``).
-
-    Contains a *hub*: one destination ``c2hub`` fanned to by four distinct
-    sources with a constant payload; a *point-to-point* monotone channel
-    (``backup`` -> ``store``); and diverse filler traffic that spreads the
-    per-entity diversity distribution so the adaptive cut is well defined. The
-    numeric payloads of the filler/benign rows step across the whole global range
-    so each entity occupies many quantile bins (genuinely diverse), rather than
-    clustering into one.
-    """
-
-    n_pay = 12
-    header = "src,dst," + ",".join(f"p{i}" for i in range(n_pay))
-    rows = [header]
-    zero = ",".join(["0"] * n_pay)
-    for source in range(4):
-        for _ in range(8):
-            rows.append(f"s{source},c2hub,{zero}")
-        for j in range(10):
-            payload = ",".join(str(j * n_fill * 13 + source + k * 101) for k in range(n_pay))
-            rows.append(f"s{source},benign{j % 5},{payload}")
-    for _ in range(20):
-        rows.append(f"backup,store,{zero}")
-    for host in range(n_fill):
-        for j in range(12):
-            payload = ",".join(str(j * n_fill * 13 + host + k * 101) for k in range(n_pay))
-            rows.append(f"f{host},fd{host},{payload}")
-    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
-    return path
-
-
-def test_entity_degree_distinguishes_hub_from_point_to_point(tmp_path: Path) -> None:
-    log = load(_network_log(tmp_path / "net.csv"))
+def test_entity_degree_distinguishes_hub_from_point_to_point(
+    tmp_path: Path, network_log_factory
+) -> None:
+    # The hub / point-to-point / filler structure comes from the shared
+    # ``network_log_factory`` fixture (tests/conftest.py).
+    log = load(network_log_factory(tmp_path / "net.csv"))
     fs = build_features(log.frame, log.schema)
 
     assert fs.context.entity_columns == ["src", "dst"]
@@ -216,34 +188,10 @@ def test_minimal_log_without_timestamp_or_categoricals(tmp_path: Path) -> None:
     assert fs.matrix.shape == (40, len(fs.names))
 
 
-def _broadcaster_log(path: Path) -> Path:
-    """A flow-like CSV with an asymmetric high-degree source endpoint.
-
-    ``10.0.0.1`` connects to 90 distinct destinations on one service (a spam/scan
-    shape) while never appearing as a destination; benign clients each talk only
-    to one of two busy servers. The two address columns are recurring
-    high-cardinality endpoints; ``svc`` is a bounded categorical context (not an
-    actor node).
-    """
-
-    header = "src,dst,svc"
-    rows = [header]
-    # Broadcaster: one source -> 90 distinct destinations, one service.
-    for i in range(90):
-        rows.append(f"10.0.0.1,10.9.{i // 256}.{i % 256},smtp")
-    # Benign clients: 60 clients, each 12 flows to one of two servers. Enough
-    # distinct sources/destinations that the address columns clear the actor
-    # endpoint distinct floor.
-    for c in range(60):
-        server = "10.0.0.250" if c % 2 == 0 else "10.0.0.251"
-        for _ in range(12):
-            rows.append(f"10.0.1.{c},{server},https")
-    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
-    return path
-
-
-def test_actor_endpoints_detected_excluding_context(tmp_path: Path) -> None:
-    log = load(_broadcaster_log(tmp_path / "bcast.csv"))
+def test_actor_endpoints_detected_excluding_context(
+    tmp_path: Path, broadcaster_log_factory
+) -> None:
+    log = load(broadcaster_log_factory(tmp_path / "bcast.csv"))
     fs = build_features(log.frame, log.schema)
 
     # The two address columns are actor endpoints; the bounded service vocabulary
@@ -252,8 +200,8 @@ def test_actor_endpoints_detected_excluding_context(tmp_path: Path) -> None:
     assert "svc" not in fs.context.actor_columns
 
 
-def test_actor_graph_role_degrees(tmp_path: Path) -> None:
-    log = load(_broadcaster_log(tmp_path / "bcast.csv"))
+def test_actor_graph_role_degrees(tmp_path: Path, broadcaster_log_factory) -> None:
+    log = load(broadcaster_log_factory(tmp_path / "bcast.csv"))
     fs = build_features(log.frame, log.schema)
     ctx = fs.context
     src = log.frame["src"].astype(str).to_numpy()
@@ -277,4 +225,4 @@ def test_actor_graph_dormant_on_click_log(tmp_path: Path) -> None:
     log = load(_write_click_log(tmp_path / "clicks.csv"))
     fs = build_features(log.frame, log.schema)
     assert len(fs.context.actor_columns) < 2
-    assert fs.context.actor_degree_by_col == {}
+    assert not fs.context.actor_degree_by_col

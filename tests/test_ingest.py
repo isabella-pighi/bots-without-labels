@@ -8,8 +8,10 @@ from pathlib import Path
 import pandas as pd
 from pandas.api import types as ptypes
 
-from bots_without_labels.ingest import Role, Schema, infer_schema, load, read_table
+from bots_without_labels.ingest import Role, load, read_table
 
+# Realistic raw log lines; the URLs make them longer than the code line limit.
+# pylint: disable=line-too-long
 CLICK_ROWS = [
     "event_id\tevent_time\tregion\tbrowser\tos\turl",
     "evt_1\t2019-12-02 00:00:00\tmars\tchrome\tios\t/ad_click?d=a.com&ttc=10&q=foo%20bar&ct=us",
@@ -17,9 +19,11 @@ CLICK_ROWS = [
     "evt_3\t2019-12-02 00:00:01\tvenus\tsafari\tandroid\t/ad_click?d=b.com&ttc=3000&q=human%20search&ct=gb",
     "evt_4\t2019-12-02 00:00:02\tmars\tsafari\tandroid\t/ad_click?d=b.com&ttc=2500&q=real%20person&ct=gb",
 ]
+# pylint: enable=line-too-long
 
 
 def _write(path: Path, lines: list[str]) -> Path:
+    """Write ``lines`` to ``path`` (newline-terminated) and return the path."""
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 

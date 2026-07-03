@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from evaluation.ctu13_bot_benchmark import SCENARIOS, _scenario_label, run
+from tests.conftest import assert_ctu13_rare_attack_recall
 
 SC3_BINETFLOW = SCENARIOS["sc3"]["binetflow"]
 
@@ -61,19 +62,9 @@ def test_scenario_label_does_not_mislabel_binetflow_override() -> None:
 def test_ctu13_sc3_recall_generalises() -> None:
     report = run(SC3_BINETFLOW)
 
-    # Same rare-attack mix shape as sc1.
-    assert report["n_rows"] == 62_000, report
-    assert 0.02 <= report["base_rate"] <= 0.05, report
-
-    # Sub-second timestamps, so the dense-timing rules stay active (as sc1).
-    grid = report["timestamp_grid_seconds"]
-    assert grid is not None and grid < 1.0, report
-    assert report["dense_timing_gated"] is False, report
-
-    # The generality win: the diverse directional bot is still recovered on a
-    # second, independent family. We pin recall but NOT precision -- on this
-    # capture asymmetric_degree over-fires, capping precision; that is a tracked
-    # detector-generality gap, not pinned here (mirrors the sc1 guard).
-    assert report["recall"] >= 0.95, report
-    for key in ("recall", "planted_precision", "flag_rate"):
-        assert 0.0 <= report[key] <= 1.0, report
+    # Same mix shape, sub-second premise, and recall guard as sc1. The generality
+    # win is that the diverse directional bot is still recovered on a second,
+    # independent family. Precision is NOT pinned -- on this capture
+    # asymmetric_degree over-fires, capping precision; that is a tracked
+    # detector-generality gap (mirrors the sc1 guard).
+    assert_ctu13_rare_attack_recall(report)
