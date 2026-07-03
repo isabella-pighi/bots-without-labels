@@ -28,7 +28,12 @@ def evaluate_injection(
             breakdown (``None`` for legitimate rows).
 
     Returns:
-        A dictionary of overall and per-archetype metrics.
+        A dictionary with ``planted``, ``flagged``, ``recovered``, ``recall``,
+        and ``planted_precision`` — the share of flagged rows that were planted
+        bots. Note this is a *lower bound* on true precision: unplanted rows the
+        detector flags count against it even when they are genuine bots in the
+        background traffic. When ``archetypes`` is given, a ``per_archetype``
+        map of ``planted``/``recovered``/``recall`` per archetype is added.
     """
 
     predicted = np.asarray(predictions).astype(bool)

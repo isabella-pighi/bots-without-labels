@@ -45,6 +45,12 @@ value keeps sparse groups from looking mechanically regular."""
 
 ENTITY_MIN_DISTINCT = 10
 """An actor-like column needs at least this many distinct values to baseline."""
+ENTITY_UNIQUE_RATIO_MAX = 0.95
+"""An entity column whose distinct count reaches this fraction of the rows is
+essentially a per-row identifier, so it is excluded from baselining."""
+ENTITY_MEDIAN_RECURRENCE_MIN = 2
+"""The median entity value must recur at least this often; below it most
+"actors" are one-offs with no history to baseline."""
 ENTITY_DIVERSITY_BINS = 8
 """Quantile bins applied to numeric columns before per-entity entropy."""
 
@@ -81,6 +87,14 @@ admitting genuinely off-grid (sub-second) instants. See :func:`_timestamp_grid`
 and :func:`_on_grid`."""
 
 _MISSING = "\x00NA"
+"""Sentinel for missing cells after stringification. The leading null byte
+cannot occur in parsed log text, so the sentinel never collides with a real
+value such as the literal string ``"NA"``."""
+
+_FIELD_SEPARATOR = "\x1f"
+"""ASCII Unit Separator used to join multi-column keys. Like :data:`_MISSING`,
+it cannot occur in parsed text, so joined keys never collide across column
+boundaries (unlike e.g. ``"|"``, which log values may contain)."""
 
 
 @dataclass
@@ -228,15 +242,28 @@ class FeatureSet:
         return pd.DataFrame(self.matrix, columns=self.names)
 
 
-def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
+def build_features(
+    frame: pd.DataFrame,
+    schema: Schema,
+    *,
+    burst_window_seconds: int = BURST_WINDOW_SECONDS,
+    entity_diversity_bins: int = ENTITY_DIVERSITY_BINS,
+) -> FeatureSet:
     """Build the numeric feature matrix and rule context for a loaded log.
 
     Args:
         frame: The typed table from :func:`~bots_without_labels.ingest.load`.
         schema: Its inferred schema.
+        burst_window_seconds: Sliding-window size for the burst-concentration
+            feature and temporal context; also part of the feature's name
+            (``burst{N}s__conc``).
+        entity_diversity_bins: Quantile bins applied to numeric columns before
+            per-entity/per-actor entropy.
 
     Returns:
-        A :class:`FeatureSet`.
+        A :class:`FeatureSet` holding the feature ``names``, the row-aligned
+        numeric ``matrix``, the per-feature ``families`` map, and the
+        :class:`FeatureContext` the rule-based detector reads.
     """
 
     n_rows = int(frame.shape[0])
@@ -328,18 +355,20 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
         context.timestamp_count = ts_counts
         grid = _timestamp_grid(times)
         context.timestamp_grid = grid
-        if grid is not None and grid >= BURST_WINDOW_SECONDS:
+        if grid is not None and grid >= burst_window_seconds:
             context.timestamp_on_grid = _on_grid(times, grid)
         context.count_values["__timestamp__"] = ts_distinct
         add("same_time__conc", np.log1p(ts_counts), "burst")
 
         keys = _joint_keys(frame, categoricals) if categoricals else np.zeros(n_rows)
-        burst, dt_std, dt_cv, run_size = _temporal_context(times, keys)
+        burst, dt_std, dt_cv, run_size = _temporal_context(
+            times, keys, window_seconds=burst_window_seconds
+        )
         context.burst_count = burst
         context.dt_std = dt_std
         context.dt_cv = dt_cv
         context.run_size = run_size
-        add(f"burst{BURST_WINDOW_SECONDS}s__conc", np.log1p(burst), "burst")
+        add(f"burst{burst_window_seconds}s__conc", np.log1p(burst), "burst")
         add("dt__std", np.log1p(dt_std), "timing")
         add("dt__cv", np.log1p(dt_cv), "timing")
 
@@ -348,10 +377,10 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
     # actor fans out. Scoring each entity by how repetitive its own events are
     # catches repetition-based bots that the globally-capped concentration rules
     # miss -- without firing on every popular value.
-    entity_cols = _entity_columns(frame, schema, categoricals)
+    entity_cols = _entity_columns(frame, categoricals)
     if entity_cols:
         diversity, volume, by_col = _entity_baseline(
-            frame, schema, entity_cols, categoricals
+            frame, schema, entity_cols, categoricals, n_bins=entity_diversity_bins
         )
         context.entity_columns = entity_cols
         context.entity_diversity = diversity
@@ -375,7 +404,7 @@ def build_features(frame: pd.DataFrame, schema: Schema) -> FeatureSet:
     actor_cols = _actor_endpoint_columns(frame, schema)
     if len(actor_cols) >= 2:
         degree, reverse_degree, vol, ctxdiv, node_degs = _actor_graph(
-            frame, schema, actor_cols
+            frame, schema, actor_cols, n_bins=entity_diversity_bins
         )
         context.actor_columns = actor_cols
         context.actor_degree_by_col = degree
@@ -429,7 +458,7 @@ def _joint_counts(
 def _joint_keys(frame: pd.DataFrame, columns: list[str]) -> np.ndarray:
     joined = _stringify(frame[columns[0]])
     for name in columns[1:]:
-        joined = joined.str.cat(_stringify(frame[name]), sep="\x1f")
+        joined = joined.str.cat(_stringify(frame[name]), sep=_FIELD_SEPARATOR)
     return joined.to_numpy()
 
 
@@ -447,9 +476,7 @@ def _unique_char_ratio(value: str) -> float:
     return len(set(value)) / len(value)
 
 
-def _entity_columns(
-    frame: pd.DataFrame, schema: Schema, categoricals: list[str]
-) -> list[str]:
+def _entity_columns(frame: pd.DataFrame, categoricals: list[str]) -> list[str]:
     """Pick actor-like columns to baseline: categoricals whose values recur.
 
     An entity column has many distinct values (so it identifies actors, not a
@@ -472,19 +499,26 @@ def _entity_columns(
     for name in categoricals:
         counts = frame[name].value_counts()
         distinct = len(counts)
-        if distinct < ENTITY_MIN_DISTINCT or distinct >= 0.95 * n_rows:
+        if (
+            distinct < ENTITY_MIN_DISTINCT
+            or distinct >= ENTITY_UNIQUE_RATIO_MAX * n_rows
+        ):
             continue
         ratio = distinct / n_rows if n_rows else 0.0
         if not (ACTOR_MIN_RATIO <= ratio <= ACTOR_MAX_RATIO):
             continue
-        if float(counts.median()) < 2:
+        if float(counts.median()) < ENTITY_MEDIAN_RECURRENCE_MIN:
             continue
         out.append(name)
     return out
 
 
 def _behaviour_frame(
-    frame: pd.DataFrame, schema: Schema, entity_col: str, categoricals: list[str]
+    frame: pd.DataFrame,
+    schema: Schema,
+    entity_col: str,
+    categoricals: list[str],
+    n_bins: int = ENTITY_DIVERSITY_BINS,
 ) -> list[np.ndarray]:
     """Coarse behavioural columns for one entity's events (ids/text excluded)."""
 
@@ -496,7 +530,7 @@ def _behaviour_frame(
             num = pd.to_numeric(frame[name], errors="coerce")
             binned = pd.qcut(
                 num.rank(method="first"),
-                q=ENTITY_DIVERSITY_BINS,
+                q=n_bins,
                 labels=False,
                 duplicates="drop",
             )
@@ -511,7 +545,10 @@ def _entity_baseline(
     schema: Schema,
     entity_cols: list[str],
     categoricals: list[str],
-) -> tuple[np.ndarray, np.ndarray, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]]:
+    n_bins: int = ENTITY_DIVERSITY_BINS,
+) -> tuple[
+    np.ndarray, np.ndarray, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]
+]:
     """Per-row entity baselining: diversity, volume, and relational degree.
 
     For each entity column, every value is scored by its behavioural *diversity*
@@ -535,7 +572,9 @@ def _entity_baseline(
     entity_values = {col: _stringify(frame[col]).to_numpy() for col in entity_cols}
 
     for entity_col in entity_cols:
-        behaviour = _behaviour_frame(frame, schema, entity_col, categoricals)
+        behaviour = _behaviour_frame(
+            frame, schema, entity_col, categoricals, n_bins=n_bins
+        )
         entities = entity_values[entity_col]
         counterpart_cols = [c for c in entity_cols if c != entity_col]
         members: dict[object, list[int]] = defaultdict(list)
@@ -609,7 +648,10 @@ def _actor_endpoint_columns(frame: pd.DataFrame, schema: Schema) -> list[str]:
 
 
 def _actor_graph(
-    frame: pd.DataFrame, schema: Schema, actor_cols: list[str]
+    frame: pd.DataFrame,
+    schema: Schema,
+    actor_cols: list[str],
+    n_bins: int = ENTITY_DIVERSITY_BINS,
 ) -> tuple[
     dict[str, np.ndarray],
     dict[str, np.ndarray],
@@ -637,7 +679,7 @@ def _actor_graph(
     context_cols = [
         c for c in schema.columns_with_role(Role.CATEGORICAL) if c not in actor_cols
     ] + schema.columns_with_role(Role.NUMERIC)
-    context_arrays = _binned_context(frame, schema, context_cols)
+    context_arrays = _binned_context(frame, schema, context_cols, n_bins=n_bins)
 
     # Per-column value -> degree, so the reverse role can be looked up across
     # columns for the same value.
@@ -672,9 +714,7 @@ def _actor_graph(
         for key, idx in members.items():
             idx_arr = np.array(idx)
             role_degree = degree_map[col][key]
-            reverse_degree = max(
-                (degree_map[o].get(key, 0) for o in others), default=0
-            )
+            reverse_degree = max((degree_map[o].get(key, 0) for o in others), default=0)
             diversity = (
                 1.0
                 if (len(idx) < 2 or not context_arrays)
@@ -695,7 +735,10 @@ def _actor_graph(
 
 
 def _binned_context(
-    frame: pd.DataFrame, schema: Schema, context_cols: list[str]
+    frame: pd.DataFrame,
+    schema: Schema,
+    context_cols: list[str],
+    n_bins: int = ENTITY_DIVERSITY_BINS,
 ) -> list[np.ndarray]:
     """Context columns as label arrays (numerics quantile-binned), for entropy."""
 
@@ -705,7 +748,7 @@ def _binned_context(
             num = pd.to_numeric(frame[name], errors="coerce")
             binned = pd.qcut(
                 num.rank(method="first"),
-                q=ENTITY_DIVERSITY_BINS,
+                q=n_bins,
                 labels=False,
                 duplicates="drop",
             )

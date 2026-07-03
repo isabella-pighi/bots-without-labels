@@ -37,6 +37,10 @@ SAMPLE_SIZE = 1000
 """Rows sampled (from the top) when classifying a column. Keeps inference fast
 on large logs while staying deterministic."""
 
+MAX_SAMPLE_BYTES = 65_536
+"""Bytes read from the head of a file for format/dialect detection. Enough to
+see many lines of any realistic log without reading a large file twice."""
+
 PARSE_RATE = 0.95
 """Fraction of sampled non-missing values that must parse as a type for the
 column to be assigned that type."""
@@ -230,7 +234,9 @@ def load(path: str | Path, *, expand_urls: bool = True) -> LoadedLog:
     """Load any supported log into a typed table with an inferred schema.
 
     Args:
-        path: Path to a CSV, TSV, JSON array, or JSON-lines log.
+        path: Path to a CSV, TSV, JSON array, or JSON-lines log. Files are
+            decoded as UTF-8 with undecodable bytes replaced, so a stray
+            non-UTF-8 byte never aborts a load.
         expand_urls: When true, detected URL columns have their query string
             expanded into new ``<column>__<param>`` columns (plus
             ``<column>__path``) before schema inference.
@@ -276,10 +282,12 @@ def read_table(path: str | Path) -> tuple[pd.DataFrame, str]:
 
     Raises:
         ValueError: If the file is empty or cannot be parsed into a table.
+        OSError: If the file cannot be read (e.g. it does not exist; callers
+            like :func:`load` check existence first).
     """
 
     file_path = Path(path).expanduser()
-    sample = file_path.read_bytes()[:65536].decode("utf-8", errors="replace")
+    sample = file_path.read_bytes()[:MAX_SAMPLE_BYTES].decode("utf-8", errors="replace")
     if not sample.strip():
         raise ValueError(f"Log file '{file_path}' is empty")
 
@@ -456,7 +464,7 @@ def _classify_column(
     examples = [str(value) for value in nonmissing.head(5).tolist()]
     sample = nonmissing.head(SAMPLE_SIZE)
 
-    role, datetime_format, numeric_subtype = _role_for(name, sample, n_unique, ratio)
+    role, datetime_format, numeric_subtype = _role_for(sample, n_unique, ratio)
     return ColumnSchema(
         name=name,
         role=role,
@@ -471,7 +479,7 @@ def _classify_column(
 
 
 def _role_for(
-    name: str, sample: pd.Series, n_unique: int, ratio: float
+    sample: pd.Series, n_unique: int, ratio: float
 ) -> tuple[str, str | None, str | None]:
     if sample.empty:
         return Role.TEXT, None, None

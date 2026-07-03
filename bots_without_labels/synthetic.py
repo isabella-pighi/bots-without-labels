@@ -74,6 +74,50 @@ _WORDS = (
 )
 _EPOCH = datetime(2021, 6, 1, 0, 0, 0)
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+_SECONDS_PER_DAY = 86_400
+"""Generated events are spread across one synthetic day starting at ``_EPOCH``."""
+
+MECHANICAL_TIMING_INTERVAL_SECONDS = 2.0
+"""Fixed inter-arrival cadence of the ``mechanical_timing`` archetype.
+
+:mod:`bots_without_labels.inject` reuses this value so injected bots present the
+same regularity to the detector as generated ones.
+"""
+
+_MECHANICAL_START_MAX_SECOND = 80_000
+"""Latest start second for a mechanical-timing run; the headroom below
+``_SECONDS_PER_DAY`` keeps the paced sequence inside the synthetic day."""
+
+_HUMAN_TTC_RANGE = (600, 9000)
+"""Time-to-click range (seconds) for human-like rows (legitimate and stealth)."""
+
+
+@dataclass(frozen=True)
+class BotSignature:
+    """The fixed context a bot archetype reuses across its rows.
+
+    Attributes:
+        domain: Click-target domain shared by every row of the archetype.
+        query: Query text shared by every row of the archetype.
+        time_to_click: Constant, implausibly fast (or suspiciously identical)
+            time-to-click in seconds.
+    """
+
+    domain: str
+    query: str
+    time_to_click: int
+
+
+_BOT_SIGNATURES: dict[str, BotSignature] = {
+    "burst": BotSignature("botnet.example", "buy now", 5),
+    "mechanical_timing": BotSignature("scriptfarm.example", "auto refresh page", 7),
+    "diffuse_replay": BotSignature("spam.example", "free gift card winner", 42),
+}
+"""Default per-archetype signatures. ``stealth`` has no entry on purpose: it
+reuses nothing, which is what makes it undetectable without labels. The
+signature *text* map in :mod:`bots_without_labels.inject` is intentionally
+similar but kept separate — injection composes signatures from the target log's
+own columns rather than from this click-log schema."""
 
 
 @dataclass
@@ -92,19 +136,32 @@ class SyntheticLog:
     archetype: list[str | None]
 
 
-def generate(n_legit: int = 900, n_bots: int = 100, *, seed: int = 0) -> SyntheticLog:
+def generate(
+    n_legit: int = 900,
+    n_bots: int = 100,
+    *,
+    seed: int = 0,
+    signatures: dict[str, BotSignature] | None = None,
+) -> SyntheticLog:
     """Generate a synthetic click log with planted bot archetypes.
 
     Args:
         n_legit: Number of legitimate events.
         n_bots: Number of bot events, split across :data:`ARCHETYPES`.
         seed: Deterministic seed.
+        signatures: Per-archetype :class:`BotSignature` overrides; defaults to
+            :data:`_BOT_SIGNATURES`. Archetypes without an entry (``stealth``)
+            carry no signature.
 
     Returns:
-        A :class:`SyntheticLog`.
+        A :class:`SyntheticLog` whose ``frame`` holds the shuffled log columns
+        (``event_id, event_time, region, browser, os, url``), ``is_bot`` the
+        aligned 0/1 ground-truth array, and ``archetype`` the aligned per-row
+        archetype name (``None`` for legitimate rows).
     """
 
     rng = random.Random(seed)
+    signatures = _BOT_SIGNATURES if signatures is None else signatures
     rows: list[dict[str, str]] = []
     archetypes: list[str | None] = []
     counter = _Counter()
@@ -118,7 +175,7 @@ def generate(n_legit: int = 900, n_bots: int = 100, *, seed: int = 0) -> Synthet
     for index, archetype in enumerate(ARCHETYPES):
         count = per + (1 if index < remainder else 0)
         builder = _BOT_BUILDERS[archetype]
-        for row in builder(rng, counter, count):
+        for row in builder(rng, counter, count, signatures.get(archetype)):
             rows.append(row)
             archetypes.append(archetype)
 
@@ -135,16 +192,25 @@ def generate(n_legit: int = 900, n_bots: int = 100, *, seed: int = 0) -> Synthet
 
 
 def write_log(path, frame: pd.DataFrame) -> None:
-    """Write a generated log frame to a TSV file (no label columns)."""
+    """Write a generated log frame to a TSV file (no label columns).
+
+    Args:
+        path: Destination file path (``str`` or ``Path``).
+        frame: The log columns to write, e.g. :attr:`SyntheticLog.frame`.
+    """
 
     frame.to_csv(path, sep="\t", index=False)
 
 
 class _Counter:
+    """Monotonic counter for unique, prefix-tagged event IDs."""
+
     def __init__(self) -> None:
+        """Start the counter at zero."""
         self.value = 0
 
     def next(self, prefix: str) -> str:
+        """Return the next ID as ``prefix`` + running integer."""
         self.value += 1
         return f"{prefix}{self.value}"
 
@@ -165,16 +231,18 @@ def _legit_row(rng: random.Random, counter: _Counter) -> dict[str, str]:
     region = rng.choice(_REGIONS)
     return {
         "event_id": counter.next("e"),
-        "event_time": _time(rng.randint(0, 86_400)),
+        "event_time": _time(rng.randint(0, _SECONDS_PER_DAY)),
         "region": region,
         "browser": rng.choice(_BROWSERS),
         "os": rng.choice(_OS),
-        "url": _url(rng.choice(_DOMAINS), _phrase(rng), rng.randint(600, 9000), region),
+        "url": _url(
+            rng.choice(_DOMAINS), _phrase(rng), rng.randint(*_HUMAN_TTC_RANGE), region
+        ),
     }
 
 
 def _burst_bots(
-    rng: random.Random, counter: _Counter, count: int
+    rng: random.Random, counter: _Counter, count: int, signature: BotSignature
 ) -> list[dict[str, str]]:
     """Many clicks in the same second, same context, fast and identical."""
 
@@ -184,8 +252,7 @@ def _burst_bots(
         rng.choice(_BROWSERS),
         rng.choice(_OS),
     )
-    domain, query = "botnet.example", "buy now"
-    second = rng.randint(0, 86_400)
+    second = rng.randint(0, _SECONDS_PER_DAY)
     for _ in range(count):
         rows.append(
             {
@@ -194,14 +261,16 @@ def _burst_bots(
                 "region": region,
                 "browser": browser,
                 "os": os_name,
-                "url": _url(domain, query, 5, region),
+                "url": _url(
+                    signature.domain, signature.query, signature.time_to_click, region
+                ),
             }
         )
     return rows
 
 
 def _diffuse_replay_bots(
-    rng: random.Random, counter: _Counter, count: int
+    rng: random.Random, counter: _Counter, count: int, signature: BotSignature
 ) -> list[dict[str, str]]:
     """An evasive bot: the same query/value, but spread across diverse contexts
     and times with no burst or regular pacing.
@@ -214,23 +283,26 @@ def _diffuse_replay_bots(
     """
 
     rows = []
-    domain, query = "spam.example", "free gift card winner"
     for _ in range(count):
         rows.append(
             {
                 "event_id": counter.next("r"),
-                "event_time": _time(rng.randint(0, 86_400)),
+                "event_time": _time(rng.randint(0, _SECONDS_PER_DAY)),
                 "region": rng.choice(_REGIONS),
                 "browser": rng.choice(_BROWSERS),
                 "os": rng.choice(_OS),
-                "url": _url(domain, query, 42, "us"),
+                # The replayed click always reports the same origin country,
+                # regardless of the (diverse) region column.
+                "url": _url(
+                    signature.domain, signature.query, signature.time_to_click, "us"
+                ),
             }
         )
     return rows
 
 
 def _mechanical_timing_bots(
-    rng: random.Random, counter: _Counter, count: int
+    rng: random.Random, counter: _Counter, count: int, signature: BotSignature
 ) -> list[dict[str, str]]:
     """Regular inter-arrival timing within one context, reused fast click."""
 
@@ -240,24 +312,25 @@ def _mechanical_timing_bots(
         rng.choice(_BROWSERS),
         rng.choice(_OS),
     )
-    domain, query = "scriptfarm.example", "auto refresh page"
-    start = rng.randint(0, 80_000)
+    start = rng.randint(0, _MECHANICAL_START_MAX_SECOND)
     for step in range(count):
         rows.append(
             {
                 "event_id": counter.next("m"),
-                "event_time": _time(start + step * 2),
+                "event_time": _time(start + step * MECHANICAL_TIMING_INTERVAL_SECONDS),
                 "region": region,
                 "browser": browser,
                 "os": os_name,
-                "url": _url(domain, query, 7, region),
+                "url": _url(
+                    signature.domain, signature.query, signature.time_to_click, region
+                ),
             }
         )
     return rows
 
 
 def _stealth_bots(
-    rng: random.Random, counter: _Counter, count: int
+    rng: random.Random, counter: _Counter, count: int, _signature: None
 ) -> list[dict[str, str]]:
     """A bot that mimics human variance: a fresh query each time, a varied click
     delay, a diverse context, and no temporal pattern.
@@ -274,12 +347,15 @@ def _stealth_bots(
         rows.append(
             {
                 "event_id": counter.next("s"),
-                "event_time": _time(rng.randint(0, 86_400)),
+                "event_time": _time(rng.randint(0, _SECONDS_PER_DAY)),
                 "region": rng.choice(_REGIONS),
                 "browser": rng.choice(_BROWSERS),
                 "os": rng.choice(_OS),
                 "url": _url(
-                    domain, query, rng.randint(600, 9000), rng.choice(_REGIONS)
+                    domain,
+                    query,
+                    rng.randint(*_HUMAN_TTC_RANGE),
+                    rng.choice(_REGIONS),
                 ),
             }
         )
