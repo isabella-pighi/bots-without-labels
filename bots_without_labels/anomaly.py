@@ -25,8 +25,19 @@ from __future__ import annotations
 import numpy as np
 
 EIF_TREES = 100
+"""Forest size. The literature's default; scores stabilise well before this."""
 EIF_EXTENSION_DIMS = 2
+"""Extension level: split hyperplanes combine up to 2 features, enough to catch
+pairwise interactions (same-context *and* same-instant) without the noise of
+fully oblique splits."""
 EIF_SAMPLE_SIZE = 4096
+"""Per-tree subsample. Isolation forests deliberately subsample -- small trees
+isolate anomalies faster and mask less -- so this does not grow with the log."""
+
+DEGENERATE_ANOMALY_SCORE = 0.5
+"""Uninformative midpoint score used when there is nothing to rank: too few
+rows/features to model, or a constant fallback score vector."""
+
 _MAD_TO_STD = 1.4826  # makes MAD a consistent estimator of the std for normal data
 
 
@@ -49,7 +60,7 @@ def score_matrix(matrix: np.ndarray, *, seed: int = 7) -> tuple[np.ndarray, str]
     if n_rows == 0:
         return np.zeros(0), "degenerate"
     if matrix.shape[1] == 0 or n_rows < 3:
-        return np.full(n_rows, 0.5), "degenerate"
+        return np.full(n_rows, DEGENERATE_ANOMALY_SCORE), "degenerate"
 
     scaled = _robust_standardize(matrix)
     raw = _extended_isolation_forest(scaled, seed=seed)
@@ -86,9 +97,12 @@ def _extended_isolation_forest(scaled: np.ndarray, *, seed: int) -> np.ndarray |
         sample_size=min(EIF_SAMPLE_SIZE, scaled.shape[0]),
         ntrees=EIF_TREES,
         ndim=min(EIF_EXTENSION_DIMS, scaled.shape[1]),
+        # Inputs are sanitised in _robust_standardize; failing loudly on a
+        # NaN/inf that slips through beats silently imputing it.
         missing_action="fail",
         standardize_data=False,
         random_seed=seed,
+        # Single-threaded keeps scoring bit-reproducible across runs and hosts.
         nthreads=1,
     )
     model.fit(scaled)
@@ -111,6 +125,6 @@ def _minmax(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=float)
     minimum, maximum = float(values.min()), float(values.max())
     if maximum - minimum <= 0.0:
-        return np.full(values.shape[0], 0.5)
+        return np.full(values.shape[0], DEGENERATE_ANOMALY_SCORE)
     scaled = (values - minimum) / (maximum - minimum)
     return np.clip(scaled, 0.0, 1.0)

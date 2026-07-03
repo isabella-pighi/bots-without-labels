@@ -32,9 +32,30 @@ from .rules import RulesResult, apply_rules
 from .threshold import dynamic_knee_threshold
 
 CANONICAL_RUN_OUTPUT_DIR = Path("run-output")
+
 HEURISTIC_CUTOFF = 0.70
+"""Rule-score decision cutoff. The rule weights in :mod:`rules` are calibrated
+against this value: no single rule reaches it alone, so a flag always needs
+corroborating evidence. Change the weights and this cutoff together."""
+
 MAX_ML_FLAG_RATE = 0.02
-DECISION_RULE = "is_bot = heuristic_score >= 0.70 OR ml_score > dynamic_ml_threshold"
+"""Upper bound on the share of rows the anomaly model may flag *on its own*
+(without rule support), so a loose threshold elbow cannot flood the output."""
+
+MAX_SELECTED_EVENTS = 500
+"""Cap on rows written to ``selected_events.json``; keeps the artefact
+reviewable (it is a triage sample, not the full prediction set, which
+``predictions.tsv`` already holds)."""
+
+DECISION_RULE = (
+    f"is_bot = heuristic_score >= {HEURISTIC_CUTOFF:.2f} "
+    "OR ml_score > dynamic_ml_threshold"
+)
+
+# Threshold-plot styling.
+_PLOT_FIGSIZE = (10, 5)
+_PLOT_DPI = 160
+_PLOT_Y_LIMITS = (0.0, 1.02)  # headroom so a score of 1.0 is not clipped
 
 
 @dataclass
@@ -73,7 +94,11 @@ class DetectionResult:
 
 
 def detect(
-    frame: pd.DataFrame, schema: Schema, *, max_ml_flag_rate: float = MAX_ML_FLAG_RATE
+    frame: pd.DataFrame,
+    schema: Schema,
+    *,
+    max_ml_flag_rate: float = MAX_ML_FLAG_RATE,
+    heuristic_cutoff: float = HEURISTIC_CUTOFF,
 ) -> DetectionResult:
     """Score a typed frame and return per-row decisions and evidence.
 
@@ -82,9 +107,14 @@ def detect(
         schema: Its inferred schema.
         max_ml_flag_rate: Upper bound on the share of rows the anomaly model may
             flag on its own, so a loose elbow cannot flood the output.
+        heuristic_cutoff: Rule-score decision cutoff. The default is calibrated
+            to the rule weights (see :data:`HEURISTIC_CUTOFF`); override for
+            ablation/tuning studies only.
 
     Returns:
-        A :class:`DetectionResult`.
+        A :class:`DetectionResult`. Its ``evidence_tier`` array encodes why each
+        row was selected: 1 = both classifiers agree, 2 = heuristic rules only,
+        3 = anomaly model only, 0 = not selected.
     """
 
     feature_set = build_features(frame, schema)
@@ -98,7 +128,7 @@ def detect(
         if rate_floor > ml_cutoff:
             ml_cutoff, ml_method = rate_floor, f"{ml_method}+rate_capped"
 
-    heuristic_flag = heuristic >= HEURISTIC_CUTOFF
+    heuristic_flag = heuristic >= heuristic_cutoff
     ml_flag = ml_scores > ml_cutoff
     is_bot = (heuristic_flag | ml_flag).astype(int)
     combined = np.maximum(heuristic, ml_scores)
@@ -123,6 +153,7 @@ def run_pipeline(
     output_dir: str | Path = CANONICAL_RUN_OUTPUT_DIR,
     *,
     display_input_path: str | Path | None = None,
+    max_output_events: int = MAX_SELECTED_EVENTS,
 ) -> dict[str, object]:
     """Load a log, run detection, and write predictions and artefacts.
 
@@ -131,9 +162,19 @@ def run_pipeline(
         output_dir: Directory for ``predictions.tsv`` and the ``artifacts/``
             folder.
         display_input_path: Optional path/name to record in the summary.
+        max_output_events: Cap on the flagged rows written to
+            ``artifacts/selected_events.json`` (highest combined score first).
 
     Returns:
         A summary dictionary, also written to ``artifacts/summary.json``.
+
+    Writes into ``output_dir``:
+        * ``predictions.tsv`` — id + 0/1 decision per row.
+        * ``predictions-extended.tsv`` — scores, evidence tier, top reason.
+        * ``artifacts/summary.json`` — the returned summary.
+        * ``artifacts/features.tsv`` — the numeric feature matrix.
+        * ``artifacts/selected_events.json`` — top flagged rows with reasons.
+        * ``artifacts/ml_score_threshold.png`` — sorted-score threshold plot.
     """
 
     root = Path(output_dir)
@@ -190,7 +231,9 @@ def run_pipeline(
     _write_extended(root / "predictions-extended.tsv", id_name, ids, result, reasons)
     _write_json(artifacts / "summary.json", summary)
     _write_features(artifacts / "features.tsv", id_name, ids, result.feature_set)
-    _write_selected(artifacts / "selected_events.json", ids, result, reasons)
+    _write_selected(
+        artifacts / "selected_events.json", ids, result, reasons, max_output_events
+    )
     _write_threshold_plot(
         artifacts / "ml_score_threshold.png", result.ml_scores, result.ml_threshold
     )
@@ -259,7 +302,9 @@ def _write_features(path: Path, id_name: str, ids, feature_set: FeatureSet) -> N
             handle.write("\t".join([str(identifier), *values]) + "\n")
 
 
-def _write_selected(path: Path, ids, result: DetectionResult, reasons) -> None:
+def _write_selected(
+    path: Path, ids, result: DetectionResult, reasons, max_events: int
+) -> None:
     selected = [row for row in range(len(ids)) if result.is_bot[row]]
     selected.sort(key=lambda row: result.combined[row], reverse=True)
     records = [
@@ -271,7 +316,7 @@ def _write_selected(path: Path, ids, result: DetectionResult, reasons) -> None:
             "combined_score": round(float(result.combined[row]), 4),
             "reasons": reasons[row][:6],
         }
-        for row in selected[:500]
+        for row in selected[:max_events]
     ]
     _write_json(path, records)
 
@@ -289,7 +334,7 @@ def _write_threshold_plot(path: Path, ml_scores: np.ndarray, cutoff: float) -> N
     index = next(
         (i for i, score in enumerate(ordered) if score <= cutoff), len(ordered) - 1
     )
-    figure, axis = plt.subplots(figsize=(10, 5))
+    figure, axis = plt.subplots(figsize=_PLOT_FIGSIZE)
     axis.plot(range(len(ordered)), ordered, color="#2f7d59", linewidth=1.4)
     axis.axvline(
         index,
@@ -302,12 +347,12 @@ def _write_threshold_plot(path: Path, ml_scores: np.ndarray, cutoff: float) -> N
     axis.set_title("Sorted anomaly scores with dynamic threshold")
     axis.set_xlabel("Events sorted by anomaly score, descending")
     axis.set_ylabel("Anomaly score")
-    axis.set_ylim(0.0, 1.02)
+    axis.set_ylim(*_PLOT_Y_LIMITS)
     axis.legend(loc="best")
     axis.grid(True, alpha=0.25)
     figure.tight_layout()
     with atomic_path_writer(path, "wb") as tmp_path:
-        figure.savefig(tmp_path, dpi=160, format="png")
+        figure.savefig(tmp_path, dpi=_PLOT_DPI, format="png")
     plt.close(figure)
 
 

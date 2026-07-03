@@ -11,6 +11,14 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+SMALL_INPUT_SIZE = 10
+"""Below this many finite scores there is no curve to find an elbow on; the
+maximum score is returned instead (nothing is flagged)."""
+
+TIED_SCORE_MIN_DISTINCT = 3
+"""Fewer distinct score values than this means the "curve" is a step function;
+Kneedle would be meaningless, so the maximum score is returned instead."""
+
 
 def dynamic_knee_threshold(scores: Sequence[float]) -> tuple[float, str]:
     """Return a self-tuned anomaly threshold and the method used.
@@ -22,7 +30,11 @@ def dynamic_knee_threshold(scores: Sequence[float]) -> tuple[float, str]:
         scores: Anomaly scores in any order.
 
     Returns:
-        A pair ``(threshold, method)``.
+        A pair ``(threshold, method)``, where ``method`` is one of
+        ``"empty_input"``, ``"small_input_fallback"``, ``"tied_score_fallback"``,
+        ``"kneedle_descending"`` (the normal path), or
+        ``"max_distance_descending_fallback"`` (geometric fallback when Kneedle
+        is unavailable or finds no interior knee).
     """
 
     ordered = sorted(
@@ -31,9 +43,9 @@ def dynamic_knee_threshold(scores: Sequence[float]) -> tuple[float, str]:
     )
     if not ordered:
         return 0.0, "empty_input"
-    if len(ordered) < 10:
+    if len(ordered) < SMALL_INPUT_SIZE:
         return max(ordered), "small_input_fallback"
-    if len(set(ordered)) < 3:
+    if len(set(ordered)) < TIED_SCORE_MIN_DISTINCT:
         return max(ordered), "tied_score_fallback"
     kneedle = _kneedle_threshold(ordered)
     if kneedle is not None:

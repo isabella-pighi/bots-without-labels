@@ -153,6 +153,9 @@ class RulesResult:
         return [[hit.reason for hit in row] for row in self.hits]
 
 
+# ``schema`` is part of the stable detector-stage signature (load -> features ->
+# rules) even though the rules currently read everything via the FeatureContext.
+# pylint: disable-next=unused-argument
 def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     """Score every row with the adaptive heuristic rules.
 
@@ -163,7 +166,12 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
             :func:`~bots_without_labels.features.build_features`.
 
     Returns:
-        A :class:`RulesResult`.
+        A :class:`RulesResult`. Its ``thresholds`` dict is JSON-ready metadata on
+        the adaptive thresholds actually applied: per-column maps under
+        ``"text_repeat"``, ``"categorical_concentration"``, and
+        ``"numeric_reuse"``, scalars under ``"context_cluster"``,
+        ``"same_instant"``, and ``"local_burst"``, plus entity/actor-rule
+        entries added below when those rules are active.
     """
 
     context = feature_set.context
@@ -237,8 +245,8 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
     # entity columns exist, so edges (entity -> counterpart) can be formed. With
     # one (or no) entity column there is no source/destination structure to read,
     # and the rule falls back to firing on monotony alone.
-    entity_graph_active = (
-        len(context.entity_columns) >= 2 and bool(context.entity_degree_by_col)
+    entity_graph_active = len(context.entity_columns) >= 2 and bool(
+        context.entity_degree_by_col
     )
     thresholds["entity_graph_active"] = entity_graph_active
     thresholds["min_hub_degree"] = MIN_HUB_DEGREE if entity_graph_active else None
@@ -462,7 +470,8 @@ def _hub_entity(
     When several entity columns qualify, the one with the highest degree (the
     most hub-like view of the row) is chosen.
 
-    Returns ``(column, value, diversity, volume, degree)``.
+    Returns ``(column: str, value: str, diversity: float, volume: int,
+    degree: int)``.
     """
 
     best: tuple[str, str, float, int, int] | None = None
@@ -478,6 +487,8 @@ def _hub_entity(
             and diversity[row] <= entity_cut
             and deg >= MIN_HUB_DEGREE
         ):
+            # False positive: short-circuit guarantees ``best`` is a tuple here.
+            # pylint: disable-next=unsubscriptable-object
             if best is None or deg > best[4]:
                 best = (
                     col,
@@ -530,7 +541,8 @@ def _asymmetric_endpoint(
     shape and dominates the false positives on real captures. Fan-in C2 coverage is
     owned by the direction-agnostic hub escalation in ``entity_monotony``.
 
-    Returns ``(source_column, out_degree, in_degree, diversity, volume)``.
+    Returns ``(source_column: str, out_degree: int, in_degree: int,
+    diversity: float, volume: int)``.
     """
 
     if not context.actor_columns:

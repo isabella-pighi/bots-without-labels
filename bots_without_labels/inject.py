@@ -17,7 +17,28 @@ import numpy as np
 import pandas as pd
 
 from .ingest import Role, Schema
-from .synthetic import ARCHETYPES
+from .synthetic import ARCHETYPES, MECHANICAL_TIMING_INTERVAL_SECONDS
+
+_SIGNATURE_TEXT = {
+    "burst": "buy now now now",
+    "mechanical_timing": "auto refresh page",
+    "diffuse_replay": "free gift card winner",
+}
+"""Reused text planted in TEXT/URL columns, per archetype.
+
+Intentionally similar to (but separate from) ``synthetic._BOT_SIGNATURES``:
+injection builds rows from the target log's own columns, so only the repeated
+*text* carries over as the signature; keep the two in the same spirit when
+editing either.
+"""
+
+_FALLBACK_SIGNATURE_TEXT = "automated click"
+"""Signature text for archetypes without an entry in :data:`_SIGNATURE_TEXT`."""
+
+# Cluster values used when a column has no non-null values to sample from.
+_FALLBACK_NUMERIC = 5.0
+_FALLBACK_CATEGORY = "bot"
+_FALLBACK_BOOLEAN = True
 
 
 @dataclass
@@ -53,12 +74,14 @@ def inject_bots(
         archetypes: Which archetypes to plant.
 
     Returns:
-        An :class:`InjectionResult`.
+        An :class:`InjectionResult`: ``is_injected`` is 1 for every appended bot
+        row and 0 for every original row, and ``archetype`` names the planted
+        archetype per row (``None`` for original rows).
     """
 
     rng = random.Random(seed)
     tmin, tmax = _time_bounds(frame, schema)
-    samples = _column_samples(frame, schema, rng)
+    samples = _column_samples(frame)
 
     new_rows: list[dict[str, object]] = []
     row_archetypes: list[str] = []
@@ -116,9 +139,9 @@ def _time_bounds(frame: pd.DataFrame, schema: Schema) -> tuple[float, float]:
     return float(nanos.min()) / 1e9, float(nanos.max()) / 1e9
 
 
-def _column_samples(
-    frame: pd.DataFrame, schema: Schema, rng: random.Random
-) -> dict[str, list]:
+def _column_samples(frame: pd.DataFrame) -> dict[str, list]:
+    """Non-null value pools per column, for sampling realistic bot cells."""
+
     samples: dict[str, list] = {}
     for column in frame.columns:
         values = frame[column].dropna().tolist()
@@ -146,22 +169,16 @@ def _cluster_values(
         pool = samples[column]
         if role in (Role.TEXT, Role.URL):
             if archetype != "stealth":
-                cluster[column] = _signature_text(archetype, rng)
+                cluster[column] = _SIGNATURE_TEXT.get(
+                    archetype, _FALLBACK_SIGNATURE_TEXT
+                )
         elif narrow and role == Role.NUMERIC:
-            cluster[column] = float(rng.choice(pool)) if pool else 5.0
+            cluster[column] = float(rng.choice(pool)) if pool else _FALLBACK_NUMERIC
         elif narrow and role == Role.CATEGORICAL:
-            cluster[column] = rng.choice(pool) if pool else "bot"
+            cluster[column] = rng.choice(pool) if pool else _FALLBACK_CATEGORY
         elif narrow and role == Role.BOOLEAN:
-            cluster[column] = rng.choice(pool) if pool else True
+            cluster[column] = rng.choice(pool) if pool else _FALLBACK_BOOLEAN
     return cluster
-
-
-def _signature_text(archetype: str, rng: random.Random) -> str:
-    return {
-        "burst": "buy now now now",
-        "mechanical_timing": "auto refresh page",
-        "diffuse_replay": "free gift card winner",
-    }.get(archetype, "automated click")
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -203,7 +220,7 @@ def _bot_time(
     if archetype == "burst":
         seconds = base_time
     elif archetype == "mechanical_timing":
-        seconds = base_time + step * 2.0
+        seconds = base_time + step * MECHANICAL_TIMING_INTERVAL_SECONDS
     else:
         seconds = rng.uniform(tmin, tmax) if tmax > tmin else base_time
     return pd.to_datetime(int(seconds * 1e9))
