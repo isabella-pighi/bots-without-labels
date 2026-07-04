@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .anomaly import score_matrix
+from .anomaly import TOP_DEVIATION_FEATURES, feature_deviations, score_matrix
 from .atomic import atomic_path_writer, atomic_text_writer
 from .features import FeatureSet, build_features
 from .ingest import Schema, load
@@ -91,6 +91,29 @@ class DetectionResult:
         """Return the per-row reason strings."""
 
         return self.rules_result.reasons()
+
+    def feature_deviations(
+        self, rows: list[int], *, top_k: int = TOP_DEVIATION_FEATURES
+    ) -> list[list[dict[str, object]]]:
+        """Explain rows by their strongest feature deviations from the batch.
+
+        The readable counterpart of :meth:`reasons` for the ML path: an ML-only
+        flag (evidence tier 3) has no rule reason, but its top robust-z
+        deviations say *which* feature values sit in the batch's extreme tail.
+        See :func:`bots_without_labels.anomaly.feature_deviations` for the
+        entry format.
+
+        Args:
+            rows: Row indices to explain.
+            top_k: Deviations to report per row.
+
+        Returns:
+            One deviation list per requested row, in the same order.
+        """
+
+        return feature_deviations(
+            self.feature_set.matrix, self.feature_set.names, rows, top_k=top_k
+        )
 
 
 def detect(
@@ -173,7 +196,8 @@ def run_pipeline(
         * ``predictions-extended.tsv`` — scores, evidence tier, top reason.
         * ``artifacts/summary.json`` — the returned summary.
         * ``artifacts/features.tsv`` — the numeric feature matrix.
-        * ``artifacts/selected_events.json`` — top flagged rows with reasons.
+        * ``artifacts/selected_events.json`` — top flagged rows with reasons and
+          their top feature deviations from the batch baseline.
         * ``artifacts/ml_score_threshold.png`` — sorted-score threshold plot.
     """
 
@@ -307,6 +331,10 @@ def _write_selected(
 ) -> None:
     selected = [row for row in range(len(ids)) if result.is_bot[row]]
     selected.sort(key=lambda row: result.combined[row], reverse=True)
+    written = selected[:max_events]
+    # Deviations are computed only for the rows actually written (pay-per-use);
+    # they are what makes a reasonless ML-only flag (tier 3) reviewable.
+    deviations = result.feature_deviations(written)
     records = [
         {
             "event_id": str(ids[row]),
@@ -315,8 +343,17 @@ def _write_selected(
             "ml_score": round(float(result.ml_scores[row]), 4),
             "combined_score": round(float(result.combined[row]), 4),
             "reasons": reasons[row][:6],
+            "feature_deviations": [
+                {
+                    "feature": dev["feature"],
+                    "value": round(float(dev["value"]), 4),
+                    "robust_z": round(float(dev["robust_z"]), 2),
+                    "batch_percentile": round(float(dev["batch_percentile"]), 4),
+                }
+                for dev in row_devs
+            ],
         }
-        for row in selected[:max_events]
+        for row, row_devs in zip(written, deviations)
     ]
     _write_json(path, records)
 

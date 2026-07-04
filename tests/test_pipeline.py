@@ -58,6 +58,31 @@ def test_run_pipeline_writes_artifacts(tmp_path: Path) -> None:
     written = json.loads((out / "artifacts" / "summary.json").read_text())
     assert written["decision_rule"].startswith("is_bot =")
 
+    # Every selected event carries its top feature deviations, so an ML-only
+    # flag (tier 3, no rule reasons) is still reviewable.
+    selected = json.loads((out / "artifacts" / "selected_events.json").read_text())
+    assert selected
+    for record in selected:
+        devs = record["feature_deviations"]
+        assert 0 < len(devs) <= 5
+        for entry in devs:
+            assert set(entry) == {"feature", "value", "robust_z", "batch_percentile"}
+            assert 0.0 <= entry["batch_percentile"] <= 1.0
+        zs = [abs(entry["robust_z"]) for entry in devs]
+        assert zs == sorted(zs, reverse=True)
+
+
+def test_feature_deviations_align_with_feature_names(tmp_path: Path) -> None:
+    _synthetic_tsv(tmp_path / "syn.tsv", n_legit=400, n_bots=50, seed=2)
+    loaded = load(tmp_path / "syn.tsv")
+    result = detect(loaded.frame, loaded.schema)
+    flagged = [int(row) for row in np.flatnonzero(result.is_bot)[:3]]
+    deviations = result.feature_deviations(flagged)
+    assert len(deviations) == len(flagged)
+    for devs in deviations:
+        assert devs
+        assert all(entry["feature"] in result.feature_set.names for entry in devs)
+
 
 def test_pipeline_recovers_planted_bots(tmp_path: Path) -> None:
     log = _synthetic_tsv(tmp_path / "syn.tsv", n_legit=900, n_bots=80, seed=2)
