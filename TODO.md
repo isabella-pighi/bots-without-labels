@@ -17,81 +17,59 @@ on purpose.
 | P2 | Important but less urgent. Improves robustness, stability, or coverage. |
 | P3 | Future-facing. Useful when more data, labels, or external context exist. |
 
-## Next Session (2026-06-25) — after actor-graph shipped
+## Shipped (roadmap items closed as of 2026-07-04)
 
-These two follow-ups come out of the CTU-13 fine-resolution work and the
-`asymmetric_degree` actor-graph rule shipped on 2026-06-25 (`2a3f362`). The new
-rule recovers diverse-bot **recall** cleanly (CTU-13 Neris 0.113 → 1.000, 2000/2000
-positives, zero false fires) but two things remain open.
+Kept as one-liners so the open items below stay readable; the full measured
+story of each arc lives in `evaluation/FINDINGS.md` and `evaluation/BENCHMARKS.md`.
 
-### CTU-13 over-flagging: calibrate the diverse-background false positives (P1)
+- **Per-entity baselining + relational hub gate** — CICIDS recall 0.022 → 0.998;
+  the busy-benign precision ceiling (old items A/B) was closed by the hub gate
+  plus timing calibration (`e6ded7a`): CICIDS 0.998 / 0.846 / flag 0.037.
+- **Actor graph / `asymmetric_degree`** (`2a3f362`) — recovers the diverse
+  directional bot (CTU-13 Neris recall 0.113 → 1.000, 2000/2000, zero false fires).
+- **CTU-13 over-flagging root-caused and fixed** (`56f305d`) — the ~0.041
+  precision was `entity_monotony` baselining degenerate `Proto`/`State` columns;
+  the actor cardinality-ratio band now gates entity columns too. Precision
+  0.041 → 0.978, flag 0.785 → 0.033, recall held at 1.000; CICIDS unregressed.
+- **Generality beyond Neris proven** (`13e9436`) — CTU-13 sc3 / Rbot: recall
+  0.985 generalised immediately; the fan-in false-positive risk materialised
+  exactly as predicted and was fixed by narrowing the rule to source fan-out
+  (precision 0.056 → 0.929, no thresholds tuned).
+- **Benchmark suite grown** (old item C, largely done) — CTU-13 sc1 + sc3,
+  UNSW-NB15 (secondary), Bournemouth web logs (honest negative transfer), all
+  skip-if-absent behind one runner (`evaluation/run_benchmarks.py`) and a shared
+  harness (`evaluation/harness.py`). Remaining: other CICIDS families (below).
+- **`Infinity`/`NaN` sanitised before standardisation** (old item E, first
+  bullet) — see the non-finite handling in `features.py`.
+- **Items 1 and 2 (P1 core)** — the schema-driven end-to-end pipeline and the
+  per-archetype label-injection suite are the shipped foundation of the repo.
+- **Item 3 (P1)** — ML-tail flags now carry their top feature deviations
+  (robust z + batch percentile) in `selected_events.json` and via
+  `DetectionResult.feature_deviations()`, so a tier-3 flag reads as "this value
+  is in the top 1% of the batch".
 
-On CTU-13 (sub-second NetFlow) overall precision is still ~0.041 with a 0.785 flag
-rate: `asymmetric_degree` is clean on its own, but the *other* heuristic rules
-(`numeric_reuse`, concentration, `context_cluster`, `local_burst`) over-flag the
-behaviourally-diverse NetFlow background. This is the real remaining limit for
-diverse-bot data. Diagnose which rules drive the ~78% flag rate on the CTU-13
-split (reuse the `evaluation/rule_diagnostic.py` per-rule counterfactual approach)
-and calibrate them down — mirroring the adaptive-threshold method used for the
-CICIDS timing gate (`e6ded7a`) — **without** regressing CICIDS (0.998 / 0.846) or
-the synthetic suite.
+## Open follow-ups
 
-### Prove `asymmetric_degree` generalises beyond Neris (P2)
+### F. Add the remaining CICIDS attack families as benchmarks (P2)
 
-The recall 1.000 win is **same-family evidence only** (CTU-13 Neris, the family the
-rule was developed against). Validate on a second, independent bot family or
-holdout (another CTU-13 scenario, or IoT-23 `C&C-HeartBeat` — needs Stratosphere
-authorization) before treating connectivity asymmetry as a general diverse-bot
-discriminator. Also assess the flagged benign false-positive risk:
-`asymmetric_degree` can fire on passive fan-in hubs.
+The rest of old item C: PortScan, DDoS, web attacks, infiltration are in the
+same `GeneratedLabelledFlows.zip` already used by the Ares benchmark, and the
+shared harness makes each family mostly a `build_mix` + spec. Tracks
+recall/precision per attack type so a regression cannot hide behind the
+synthetic suite. Extends item 10.
 
-## Next Session (picked up 2026-06-23 PM)
-
-Concrete follow-ups from the real-data evaluation (see `evaluation/FINDINGS.md`).
-Per-entity baselining now recovers the CICIDS botnet (recall 0.022 → 0.998) but
-precision is only 0.144: busy *legitimate* servers are as low-diversity as bots,
-so the entity-monotony rule over-flags. These are the steps to take it further.
-
-### A. Lift entity-monotony precision past the busy-benign ceiling (P1)
-
-Diversity alone cannot separate a botnet host from a busy legitimate server —
-only the shared C2 hub is uniquely separable. Add a *second discriminator* that
-fires only when an entity is both monotonous **and** structurally bot-like:
-
-- Sub-minute timing regularity, where timestamp resolution allows (a beacon has
-  a regular cadence; a busy server does not). Couples with item 6.
-- Relational structure: one external hub contacted by *many* monotonous sources.
-  This is the graph view in item 9 — promote it from P3 for the entity case.
-- Or a per-volume-stratified diversity baseline: compare a busy entity against
-  other busy entities, not against the global tail.
-
-### B. Calibrate the entity-monotony threshold (P1)
-
-The cut is currently a fixed 10th-percentile with a 0.20 ceiling — recall 0.998
-but a 21.9% flag rate. Try gap/knee detection on the entity-diversity
-distribution, and add a heuristic flag-rate cap mirroring `MAX_ML_FLAG_RATE`.
-Measure every change on the benchmark; do **not** tune to the single C2 hub.
-
-### C. Grow the labelled real-data benchmark suite (P2)
-
-`tests/test_real_benchmark.py` pins one attack family. Add the other CICIDS
-families (PortScan, DDoS, web attacks, infiltration) and one non-network log,
-each as a skip-if-absent benchmark, so recall/precision are tracked per attack
-type and a regression cannot hide behind the synthetic suite. Extends item 10.
-
-### D. Route the per-entity change through HCOM Codex review
+### G. Route the per-entity change through HCOM Codex review (process)
 
 The fix (commit 98646c1) was committed directly, bypassing the PM-commits-only
-protocol. Have the ML-engineer-reviewer (Codex) review `features.py` / `rules.py`
-before treating it as final.
+protocol. Have the ML-engineer-reviewer (Codex) review `features.py` /
+`rules.py` before treating it as final. The change has since been repeatedly
+benchmark-verified, so this is protocol debt rather than correctness risk.
 
-### E. Minor robustness (P2/P3)
+### H. Integer-coded identifier inference (P2/P3)
 
-- Sanitise `Infinity` / `NaN` in numeric features *before* standardisation;
-  results are already nan-guarded, but CICIDS flow data raises a numpy warning.
-- Revisit integer-coded identifier inference: a `session ID` / numeric IP is
-  typed numeric, so per-entity baselining and id handling miss it. Couples with
-  the schema-override / entity-id hints in item 4.
+Old item E, second bullet: a `session ID` / numeric IP is typed numeric, so
+per-entity baselining and id handling miss it. Couples with the
+schema-override / entity-id hints in item 4.
 
 ## P1: Core Promise
 
@@ -106,6 +84,9 @@ without bespoke parsing.
 - Click-specific behaviour appears only when the relevant columns are detected,
   never as a hardcoded branch.
 
+*Status: shipped.* `run_pipeline()` / `detect()` are the single entry points;
+every benchmark and test runs through them.
+
 ### 2. Richer label-injection archetypes
 
 Synthetic bots planted into real traffic are how detection is measured without
@@ -116,11 +97,22 @@ reported per archetype, not just in aggregate.
   nonsense strings, and slow-drip archetypes.
 - Per-archetype recall and overall precision against the planted ground truth.
 
+*Status: shipped.* Four archetypes (two deliberately evasive) in
+`synthetic.py` / `inject.py`, with per-archetype recall via
+`evaluate_injection()`; custom signatures injectable via
+`generate(signatures=...)`.
+
 ### 3. Explain ML-tail events with feature deviations
 
 An anomaly score alone is not enough for a reviewer. For high-anomaly events,
 store the top feature deviations from the batch baseline so an ML-only flag can
 be read as "this value is in the top 1% of the batch", not an opaque tree path.
+
+*Status: shipped (2026-07-04).* `anomaly.feature_deviations()` reports the top
+robust-z deviations (with batch percentiles) in the same median/MAD space the
+model scores in; surfaced per selected event in `selected_events.json` and via
+`DetectionResult.feature_deviations()`. Motivated by the benchmarks: after rule
+calibration, all residual false positives were tier-3 (ML-only) flags.
 
 ## P2: Robustness And Coverage
 
@@ -166,12 +158,13 @@ identifiers to surface coordinated behaviour that per-event signals miss
 (shared-identifier fan-out, connected-component size, repeated edges). Keep it
 optional and disabled when no stable identifier is present.
 
-*Status (branch `agent/actor-graph`): partly delivered.* Two graph signals now
-exist — the relational hub gate on `entity_monotony` (fan-in stars) and the
-direction-agnostic `asymmetric_degree` rule on an undirected actor-endpoint graph
-(asymmetric high-degree stars), both dormant when no stable endpoint columns are
-present. See `evaluation/FINDINGS.md`. Still open: connected-component size,
-repeated-edge weighting, and validation on a second labelled family.
+*Status: largely delivered.* Two graph signals now exist — the relational hub
+gate on `entity_monotony` (fan-in stars) and the source-fan-out
+`asymmetric_degree` rule on the actor-endpoint graph, both dormant when no
+stable endpoint columns are present. Validation on a second labelled family is
+**done** (CTU-13 sc3 / Rbot — see the Shipped section). See
+`evaluation/FINDINGS.md`. Still open: connected-component size and
+repeated-edge weighting.
 
 ### 10. Labelled validation and cost-sensitive thresholds
 
