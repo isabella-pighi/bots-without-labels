@@ -23,6 +23,7 @@ Zhou 2008/2012; Hariri, Carrasco Kind & Brunner 2019):
 from __future__ import annotations
 
 import numpy as np
+from scipy.stats import rankdata
 
 EIF_TREES = 100
 """Forest size. The literature's default; scores stabilise well before this."""
@@ -37,6 +38,10 @@ isolate anomalies faster and mask less -- so this does not grow with the log."""
 DEGENERATE_ANOMALY_SCORE = 0.5
 """Uninformative midpoint score used when there is nothing to rank: too few
 rows/features to model, or a constant fallback score vector."""
+
+TOP_DEVIATION_FEATURES = 5
+"""Feature deviations reported per explained row: enough to read why a row is
+anomalous, short enough to scan in a review queue."""
 
 _MAD_TO_STD = 1.4826  # makes MAD a consistent estimator of the std for normal data
 
@@ -67,6 +72,67 @@ def score_matrix(matrix: np.ndarray, *, seed: int = 7) -> tuple[np.ndarray, str]
     if raw is not None:
         return np.clip(raw, 0.0, 1.0), "eif"
     return _minmax(_deviation_score(scaled)), "fallback"
+
+
+def feature_deviations(
+    matrix: np.ndarray,
+    feature_names: list[str],
+    rows: list[int],
+    *,
+    top_k: int = TOP_DEVIATION_FEATURES,
+) -> list[list[dict[str, object]]]:
+    """Explain rows by their strongest feature deviations from the batch baseline.
+
+    An anomaly score alone tells a reviewer nothing actionable. This turns a
+    high-scoring row into readable evidence: for each requested row, the
+    ``top_k`` features whose values sit furthest from the batch baseline, in the
+    **same robust (median / MAD) space the anomaly model scores in** — so the
+    explanation describes exactly the deviations that drove the score.
+
+    Args:
+        matrix: ``(n_rows, n_features)`` float matrix, as scored by
+            :func:`score_matrix` (e.g. ``FeatureSet.matrix``).
+        feature_names: Column names aligned to the matrix.
+        rows: Row indices to explain.
+        top_k: Deviations to report per row.
+
+    Returns:
+        One list per requested row (same order), each holding up to ``top_k``
+        dicts sorted by descending ``abs(robust_z)``:
+
+        * ``feature`` — the feature name;
+        * ``value`` — the row's raw feature value;
+        * ``robust_z`` — signed distance from the batch median in MAD units;
+        * ``batch_percentile`` — the value's rank within the batch in ``[0, 1]``
+          (ties averaged), so ``>= 0.99`` reads as "in the top 1% of the batch"
+          and ``<= 0.01`` as the bottom 1%.
+
+        Rows explain to empty lists when the matrix has no features.
+    """
+
+    matrix = np.asarray(matrix, dtype=float)
+    if not rows or matrix.shape[0] == 0 or matrix.shape[1] == 0:
+        return [[] for _ in rows]
+
+    scaled = _robust_standardize(matrix)
+    # Per-column percentile rank of every value (ties averaged), computed once.
+    percentiles = rankdata(matrix, method="average", axis=0) / matrix.shape[0]
+
+    out: list[list[dict[str, object]]] = []
+    for row in rows:
+        order = np.argsort(-np.abs(scaled[row]))[:top_k]
+        out.append(
+            [
+                {
+                    "feature": feature_names[col],
+                    "value": float(matrix[row, col]),
+                    "robust_z": float(scaled[row, col]),
+                    "batch_percentile": float(percentiles[row, col]),
+                }
+                for col in order
+            ]
+        )
+    return out
 
 
 def _robust_standardize(matrix: np.ndarray) -> np.ndarray:
