@@ -58,12 +58,25 @@ shared harness makes each family mostly a `build_mix` + spec. Tracks
 recall/precision per attack type so a regression cannot hide behind the
 synthetic suite. Extends item 10.
 
-### G. Route the per-entity change through HCOM Codex review (process)
+### G. Route direct-to-main engine commits through HCOM Codex review (process)
 
-The fix (commit 98646c1) was committed directly, bypassing the PM-commits-only
-protocol. Have the ML-engineer-reviewer (Codex) review `features.py` /
-`rules.py` before treating it as final. The change has since been repeatedly
-benchmark-verified, so this is protocol debt rather than correctness risk.
+Several engine changes were committed directly to `main`, bypassing the
+PM-commits-only protocol and the cross-model ML-engineer review it requires.
+Have the ML-engineer-reviewer (Codex) review each before treating it as final;
+review either closes the debt or is replaced by an explicit, dated owner waiver
+per commit:
+
+- `98646c1` — per-entity baselining + CICIDS benchmark (`features.py` /
+  `rules.py`).
+- `43b5e86` — constants extraction, tuning-param exposure, docstrings across
+  `bots_without_labels/*.py` (behaviour-preserving; benchmarks verified
+  bit-identical, so low correctness risk).
+- `1a4abeb` — ML-tail feature deviations (`anomaly.py` / `pipeline.py`;
+  additive and decision-neutral — pay-per-use, no change to scoring or
+  decisions).
+
+All have since been benchmark-verified, so this is protocol debt rather than
+correctness risk.
 
 ### H. Integer-coded identifier inference (P2/P3)
 
