@@ -62,14 +62,15 @@ Then we ran real, externally-labeled traffic (CICIDS2017 botnet). The story inve
 - **Timing features are conditional, not free.** CICIDS timestamps are
   minute-quantized at the source, so the sub-second burst rules fired on whole-minute
   bins — pure noise. Gating those rules off on coarse clocks (adaptively, by detected
-  resolution) pushed CICIDS precision to **0.846** with recall unchanged at 0.998.
+  resolution) pushed CICIDS precision to **0.846** — later **0.879** after decoupling
+  the sparse-timing sentinel from the ML feature matrix — with recall unchanged at 0.998.
 
 ## What the evidence supports
 
 - **Per-entity baselines and graph/hub features are the two design changes that
   actually moved the needle.** Everything else is calibration around them.
 - On the CICIDS botnet, the stacked design holds recall **0.998** at precision
-  **0.846** and a **3.7%** flag rate — a real, externally-labeled result.
+  **0.879** and a **3.6%** flag rate — a real, externally-labeled result.
 - A connectivity-asymmetry graph signal can recover a *diverse* bot — one that
   defeats repetition-based rules — cleanly on its own (2000/2000, zero false fires).
 - **Thresholds must be adaptive or batch-relative.** With no labels there is no fixed
@@ -88,10 +89,11 @@ Then we ran real, externally-labeled traffic (CICIDS2017 botnet). The story inve
 - **Do not claim generality from one attack family.** The diverse-bot graph win is
   same-family evidence (CTU-13/Neris, the family it was built against). It supports a
   hypothesis; it is not proof it transfers to unseen families.
-- **Do not over-read the CTU-13 precision.** Recall **1.000** and precision **0.978**
-  are both real now (the entity-column band fix resolved the diverse-background
-  over-flagging), but this is still **one Neris scenario**. Treat 0.978 as a measured
-  result on this capture, not a general precision or proof the method transfers.
+- **Do not over-read the CTU-13 precision.** Recall **1.000** and precision **0.971**
+  are both real now (the entity-column band fix lifted precision to 0.978; the later
+  ML-tail decouple trades it to 0.971), but this is still **one Neris scenario**. Treat
+  0.971 as a measured result on this capture, not a general precision or proof the
+  method transfers.
 - **Do not trust timing signals on coarse timestamps.** Minute- or second-resolution
   logs cannot support sub-second burst or cadence features; the engine gates them off,
   and so should your interpretation.

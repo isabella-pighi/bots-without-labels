@@ -235,7 +235,8 @@ logs and the synthetic suite are unaffected):
 |---|---|---|---|
 | Before (timing/monotony only) | 0.113 | 0.005 | 0.757 |
 | + asymmetric_degree | 1.000 | 0.041 | 0.785 |
-| **+ actor-band entity gating (current)** | **1.000** | **0.978** | **0.033** |
+| + actor-band entity gating | 1.000 | 0.978 | 0.033 |
+| **+ ML-tail sentinel decouple (current)** | **1.000** | **0.971** | **0.033** |
 
 Reproduce with `uv run --extra eif python -m evaluation.ctu13_bot_benchmark`
 (n = 62,000 rows, base rate 0.032, microsecond timestamps, dense-timing rules
@@ -376,7 +377,8 @@ and the precision gap was then closed by a targeted directional change.
 |---|---|---|---|---|
 | (reference) | CTU-13 sc1 (Neris) | 1.000 | 0.978 | 0.033 |
 | Direction-agnostic `asymmetric_degree` | CTU-13 sc3 (Rbot) | 0.985 | 0.056 | 0.567 |
-| **+ source fan-out narrowing (current)** | **CTU-13 sc3 (Rbot)** | **0.985** | **0.929** | **0.034** |
+| + source fan-out narrowing | CTU-13 sc3 (Rbot) | 0.985 | 0.929 | 0.034 |
+| **+ ML-tail sentinel decouple (current)** | **CTU-13 sc3 (Rbot)** | **0.985** | **0.9319** | **0.034** |
 
 (n = 62,000 rows, base rate 0.0323. Source: CTU-Malware-Capture-Botnet-44 detailed
 bidirectional flow labels, Stratosphere Laboratory / CTU, CC-BY; a skip-if-absent
@@ -440,8 +442,10 @@ actor-graph rule contributes none.
 - **Still two scenarios of one dataset.** sc1 + sc3 are both CTU-13; this is
   second-family evidence within that corpus, not a fully independent one.
 
-The protected gates are unchanged by this work: CICIDS 0.998 / 0.846 / 0.037 and
-CTU-13 sc1 1.000 / 0.978 / 0.033 both stand.
+At the source-fan-out revision, this work left the protected gates unchanged:
+CICIDS 0.998 / 0.846 / 0.037 and CTU-13 sc1 1.000 / 0.978 / 0.033 (the values as of that
+revision). Their **current** post-decouple values are CICIDS 0.879 and CTU-13 sc1 0.971
+(see the `BENCHMARKS.md` registry).
 
 *Original split finding measured by mono (#37642); the source-fan-out narrowing and
 its numbers verified by rina (review #38226).*
@@ -527,18 +531,22 @@ the actual diff): CICIDS/Ares precision rises **0.846 → 0.879**, recall held a
 **0.998**, flag rate **0.037 → 0.036** — the lift comes from shrinking exactly the
 ML-only tail the ceiling identified. On the microsecond-clocked CTU-13 sc1 (Neris) it
 costs a small amount: precision **0.978 → 0.971**, recall held at **1.000**, flag rate
-0.033. Net across the two primary captures: **+3.3 pts CICIDS, -0.7 pts CTU**, both
-recalls flat.
+0.033. On the second-family probe CTU-13 sc3 (Rbot) it is a small *gain* the other way —
+precision **0.929 → 0.9319**, recall and flag rate flat — because the same ML-only
+recalibration helps there. Net across the two primary captures: **+3.3 pts CICIDS,
+-0.7 pts CTU sc1**, both recalls flat.
 
 A blunter variant — **dropping the `dt` features from the matrix entirely** — was
 **rejected**: it cost CTU-13 **-4.8 pts** precision, because the `dt` axes still carry
 real discriminating signal on a fine-resolution clock. Median-fill keeps that signal
 for rows that have it while denying the sentinel a chance to masquerade as spread.
 
-*Validation (re-run on the actual diff): `uv run pytest -q` → 85 passed;
-`evaluation.cicids_bot_benchmark` → recall 0.998 / precision 0.879 / flag 0.036;
-`evaluation.ctu13_bot_benchmark` → recall 1.000 / precision 0.971 / flag 0.033.
-Numbers confirmed by the ML reviewer against the measured tables before entry.*
+*Validation (fresh reviewed re-run at `ef92510`, ML pair): `uv run pytest -q` → 85
+passed; `evaluation.cicids_bot_benchmark` → recall 0.998 / precision 0.879 / flag 0.036;
+`evaluation.ctu13_bot_benchmark` → recall 1.000 / precision 0.971 / flag 0.033;
+`… --scenario sc3` → recall 0.985 / precision 0.9319 / flag 0.034;
+`evaluation.rule_diagnostic` → flagged 2,232 / fp 270 / ML-only 165. Confirmed by the
+ML reviewer against the measured tables before entry.*
 
 ### The honest ceiling (ML-tail decouple)
 
@@ -550,9 +558,10 @@ Read this as an anomaly-axis calibration on two captures, not a general precisio
 - **It is a small cross-capture tradeoff, judged net-positive.** CICIDS +3.3 pts
   against CTU -0.7 pts. That is a value judgement on two captures of two families, not
   proof the tradeoff generalises to unseen data.
-- **The recomputed per-rule attribution is pending.** The exact new ML-only false
-  positive count on CICIDS (was ~253) needs a diagnostic re-run before it is
-  registered; the CICIDS attribution table in `BENCHMARKS.md` is flagged pre-fix.
+- **The per-rule attribution has been recomputed.** On CICIDS the ML-only false
+  positives fell **~253 → 165** and total false positives **358 → 270** (fresh reviewed
+  `rule_diagnostic` at `ef92510`); the `BENCHMARKS.md` attribution table now carries
+  current and pre-decouple columns side by side.
 
 ## Takeaway
 

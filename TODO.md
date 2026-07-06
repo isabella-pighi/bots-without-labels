@@ -17,7 +17,7 @@ on purpose.
 | P2 | Important but less urgent. Improves robustness, stability, or coverage. |
 | P3 | Future-facing. Useful when more data, labels, or external context exist. |
 
-## Shipped (roadmap items closed as of 2026-07-04)
+## Shipped (roadmap items closed as of 2026-07-06)
 
 Kept as one-liners so the open items below stay readable; the full measured
 story of each arc lives in `evaluation/FINDINGS.md` and `evaluation/BENCHMARKS.md`.
@@ -35,6 +35,12 @@ story of each arc lives in `evaluation/FINDINGS.md` and `evaluation/BENCHMARKS.m
   0.985 generalised immediately; the fan-in false-positive risk materialised
   exactly as predicted and was fixed by narrowing the rule to source fan-out
   (precision 0.056 → 0.929, no thresholds tuned).
+- **ML-tail sentinel decouple** (`ef92510`) — the sparse-timing sentinel
+  (`SPARSE_TIMING_SENTINEL = 999`) no longer pollutes the EIF feature matrix
+  (median-fill of the `dt` axes plus a `has_regular_timing` indicator); the
+  `regular_timing` rule is byte-identical. CICIDS 0.846 → 0.879, flag 0.037 → 0.036
+  (ML-only false positives ~253 → 165); CTU-13 sc1 0.978 → 0.971; sc3 0.929 → 0.9319;
+  all recalls flat. The "drop `dt` entirely" variant was rejected (CTU -4.8 pts).
 - **Benchmark suite grown** (old item C, largely done) — CTU-13 sc1 + sc3,
   UNSW-NB15 (secondary), Bournemouth web logs (honest negative transfer), all
   skip-if-absent behind one runner (`evaluation/run_benchmarks.py`) and a shared

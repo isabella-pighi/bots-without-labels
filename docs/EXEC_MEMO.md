@@ -1,6 +1,6 @@
 # Memo: Bots Without Labels — where it stands and what to fund next
 
-**Bottom line:** The detector now produces a defensible result on real, labeled botnet traffic — recall 0.998 at precision 0.846 — but it is a ranking tool that tells analysts where to look, not a system that decides who is a bot. Treat its output as triage, not judgment.
+**Bottom line:** The detector now produces a defensible result on real, labeled botnet traffic — recall 0.998 at precision 0.879 — but it is a ranking tool that tells analysts where to look, not a system that decides who is a bot. Treat its output as triage, not judgment.
 
 ## What changed, plainly
 
@@ -12,7 +12,8 @@ below the base rate). Two design changes fixed that, in order:
 1. **Per-entity baselines** — judge each actor against its own behavior. Recovered
    recall (near zero → 0.998), but over-flagged busy-but-legitimate servers.
 2. **Graph/hub structure** — only escalate actors that sit in bot-like connectivity.
-   This is what bought precision (0.144 → 0.441 → 0.846 after timing calibration) and
+   This is what bought precision (0.144 → 0.441 → 0.846 after timing calibration, then
+   0.879 after decoupling the sparse-timing sentinel from the ML feature matrix) and
    cut false alarms.
 
 These two are the real assets. Everything else is tuning.
@@ -20,7 +21,7 @@ These two are the real assets. Everything else is tuning.
 ## What the evidence supports
 
 - A real, externally-validated operating point on a botnet capture: recall 0.998,
-  precision 0.846, 3.7% flag rate.
+  precision 0.879, 3.6% flag rate.
 - A graph signal that catches *diverse* bots — the kind that beat our earlier rules —
   cleanly (every planted bot, no false fires from that rule).
 - A method honest about its own limits: thresholds are batch-relative because we have
