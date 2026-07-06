@@ -500,6 +500,57 @@ calibration; it needs **web-specific signals** — interaction biometrics such a
 dynamics, which Bournemouth happens to carry — a separate future capability, tracked in
 `TODO.md` (P3, item 12), not a tweak to the existing rules.
 
+### Request-level session features — a negative-with-nuance probe
+
+**All numbers in this subsection are INTERNAL / PROVISIONAL — Bournemouth Phase 0,
+licence-pending (research use invited, copyright reserved). They are not field results
+and must not appear in any external-facing artefact.**
+
+Before closing the request-log route, we ran a *supervised separability* probe: could
+session-level **request** features (volume, distinct paths, path entropy, referrer
+continuity, status-code mix, HTTP-method fractions) separate the **hard** case —
+`advanced_bot` vs `human` — even with labels in hand? This is a pre-registered research
+question, deliberately kept apart from the unsupervised detector: it asks whether the
+*signal exists*, not whether the pipeline finds it. The pipeline's own Phase-1 run
+reproduced the negative this session — precision **0.0276**, recall 0.873, flag rate
+0.918 (base 0.029) — and the floor any signal must beat is the method's **0 of 11** bot
+sessions.
+
+**Pre-registered bar:** a feature is promising *iff* it reaches AUC **≥ 0.75 train and
+≥ 0.70 test** on `advanced_bot` vs `human`. Nothing clears it:
+
+| Request feature (advanced_bot vs human) | AUC | Verdict |
+|---|---|---|
+| status-code mix / referrer-presence / HEAD-fraction | 0.500 (zero variance) | degenerate — no signal |
+| volume / distinct_paths / path_entropy | 0.50–0.56 train | classes overlap |
+| `referer_continuity` (best single feature) | 0.635 train / 0.767 test | fails the train bar |
+| multivariate logistic (non-degenerate feats) | ≈ 0.80 in-collection (n = 30 test) | suggestive, but weak / small-n / unvalidated out-of-collection |
+| *moderate* bots (for contrast) | 0.93–0.97 | separate well — but not the hard problem |
+
+The single best request feature misses the bar; the multivariate ≈ 0.80 is on **30 test
+sessions**, in-collection only, and is not a capability.
+
+**The phase-2 artefact trap — record it so it is not mistaken for a breakthrough.** A
+cross-collection model (train phase-1 → test phase-2) scores AUC **0.996**. That is a
+**collection artefact, not capability.** Phase-2 humans issue **5–7× more requests per
+session** than phase-2 bots (median **1,566 vs 286**, near-disjoint distributions),
+whereas in phase-1 the same distributions overlap (**220 vs 211**). `req_count` **alone**
+scores AUC **1.000 on phase-2 and 0.500 on phase-1** — the "0.996" is the model reading
+phase-2's request-volume split, not bot behaviour. **Any cross-collection validation here
+must sanity-check `req_count` first**, or it will mistake a collection quirk for a signal.
+
+**Conclusion (negative-with-nuance).** Request-level features do **not** deliver robust,
+generalisable separation of human-mimicking web bots. The in-collection multivariate
+≈ 0.80 is too weak, too small-n, and unvalidated out-of-collection to justify an engine
+change, and the headline cross-collection 0.996 is an artefact. This reinforces the
+existing direction — **TODO item 12 / Phase 3a interaction biometrics (mouse dynamics)** —
+as the route carrying a signal the request log lacks. The general caveat it underlines:
+*supervised separability is not unsupervised detectability in the actual pipeline* — a
+classifier handed labels finding ≈ 0.80 AUC in-collection says nothing about whether the
+unlabelled detector would surface those sessions, and the pipeline's own run (precision
+0.0276) shows it does not. No detector thresholds were tuned, no model was shipped, and
+the committed benchmark numbers are unchanged.
+
 ## Decoupling the sparse-timing sentinel from the ML feature matrix
 
 The CICIDS honest ceiling above named the residual error precisely: of 358 false
