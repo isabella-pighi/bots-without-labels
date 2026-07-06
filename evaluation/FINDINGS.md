@@ -563,6 +563,63 @@ Read this as an anomaly-axis calibration on two captures, not a general precisio
   `rule_diagnostic` at `ef92510`); the `BENCHMARKS.md` attribution table now carries
   current and pre-decouple columns side by side.
 
+## Feeding actor-graph features into the EIF matrix — a measured dead end
+
+`asymmetric_degree` recovers the diverse fan-out bot the repetition rules miss (the
+actor-graph discriminator above). The obvious next thought is to hand the *same*
+connectivity signal to the Extended Isolation Forest — put source out-degree, role
+asymmetry and source volume into the feature matrix so the ML tail can lean on graph
+structure too. It was tried, in two variants, and it is a **measured dead end**: every
+variant regressed precision on every capture and bought no meaningful recall. Recorded
+here so it is not re-attempted.
+
+| Capture | Baseline (`2be1811`) | Variant (a): 3 graph features | Variant (b): asymmetry ratio only |
+|---|---|---|---|
+| CICIDS / Ares | 0.8790 | 0.7572 (**-12.2 pts**) | 0.8571 (-2.2 pts) |
+| CTU-13 sc1 / Neris | 0.9713 | 0.9456 (-2.6 pts) | 0.9465 (-2.5 pts) |
+| CTU-13 sc3 / Rbot | 0.9319 | 0.9116 (-2.0 pts) | 0.8920 (-4.0 pts) |
+
+*Precision. Recall saw no meaningful gain (CICIDS 0.998, sc1 1.000, sc3 0.985 — sc3
+rises trivially to 0.987 under (b)); no variant bought recall.* Variant (a) added
+`log1p(source out-degree)`, `log1p(asymmetry ratio = degree / (reverse-role degree + 1))`
+and `log1p(source volume)`; variant (b) added the asymmetry ratio alone. The damage is
+worst on CICIDS — the fan-in star capture — where the three-feature variant cost **12
+points** of precision, actively undoing the ML-tail precision the sparse-timing decouple
+had just won.
+
+### Why it fails: the guards live in the rules, not the features
+
+The connectivity evidence is already owned by two rules — `asymmetric_degree` and
+`entity_monotony` — and the reason they are safe is *not* the raw signal, it is the
+**gates around it**:
+
+- a **monotony ceiling** — a behaviourally diverse actor is never escalated;
+- an **adaptive degree floor** — the 99th percentile over distinct-group sizes, so only
+  genuinely high-degree endpoints qualify;
+- an **order-of-magnitude asymmetry guard** — `DEGREE_ASYMMETRY ≈ 10`: a source must
+  out-fan its reverse role by roughly 10× before it counts.
+
+A raw graph feature in the EIF matrix carries **none** of these. The isolation forest
+sees a busy but entirely benign source — a legitimate high-degree, high-volume server —
+as an outlier on the degree/volume/asymmetry axes and isolates it as a **tier-3,
+ML-only false positive**. The features therefore add false positives without adding any
+discrimination the guarded rules did not already provide.
+
+This is the **architecture contract's fan-out false-positive lesson (§6)** restated from
+the other side: the fix for fan-out over-flagging was never "add more graph signal" or
+"get the direction right" — it was the **gates**. Putting ungated graph features into
+the ML matrix reintroduces exactly the un-gated over-flagging those guards were built to
+prevent. **The problem is missing gates, not merely direction.**
+
+### Honest scope
+
+This is a negative result *as tried* — raw `log1p` connectivity features, ungated, on
+the current three captures. It does not prove that no *gated* ML use of graph structure
+could ever help; it shows that the naive "just add the features" route regresses
+precision and should not be revisited without first carrying the rule guards into the
+matrix. No headline benchmark numbers changed — the variants were not shipped, and the
+`2be1811` baseline stands.
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was
