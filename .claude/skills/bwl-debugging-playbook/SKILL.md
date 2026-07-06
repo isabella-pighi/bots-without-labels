@@ -16,7 +16,7 @@ description: >
 
 Imperative triage for when the detector produces the *wrong answer on a dataset* (bad
 recall/precision, a rule that won't fire or won't stop firing, a mis-typed column). This is a
-**runbook**, not theory. Every command below was run against the repo at commit `6fd33ac`.
+**runbook**, not theory. Every command below was run against the repo at commit `8a85edd`.
 
 New to the domain? One-line glossary you will need here:
 - **flow / NetFlow** — one row = one network conversation (source IP, dest IP, protocol,
@@ -374,7 +374,7 @@ Next skill: `bwl-validation-and-qa` (tier discipline: what counts as evidence).
 
 ## Recorded benchmark numbers (cite, don't re-run the full suite)
 
-These are the tracked golden numbers as of `evaluation/BENCHMARKS.md` at commit `6fd33ac`. Use
+These are the tracked golden numbers as of `evaluation/BENCHMARKS.md` at commit `8a85edd`. Use
 them to judge whether a change is a regression; do not treat synthetic numbers as field
 accuracy.
 
@@ -390,7 +390,7 @@ accuracy.
 
 ## Provenance and maintenance
 
-Authored 2026-07-06, repo at commit `6fd33ac` (verified `git rev-parse HEAD`). British English.
+Authored 2026-07-06, repo at commit `8a85edd` (verified `git rev-parse HEAD`). British English.
 All commands and constants below were run/read against that commit. Re-verify volatile facts:
 
 | Fact | One-line re-verification |

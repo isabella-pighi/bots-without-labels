@@ -153,7 +153,7 @@ more that it ignores — most importantly **mouse-movement traces** and **train/
 Inspect read-only; do not unpack into the repo tree.
 
 ```bash
-# structure overview (verified 2026-07-06 at commit 6fd33ac)
+# structure overview (verified 2026-07-06 at commit 8a85edd)
 unzip -l data/web_bot_detection_dataset.zip | head -40
 unzip -l data/web_bot_detection_dataset.zip | grep -c mouse_movements.json   # -> 200 (phase1)
 ```
@@ -315,7 +315,7 @@ without new evidence is a process error.
 
 ## Provenance and maintenance
 
-*Authored 2026-07-06 (repo at commit `6fd33ac`). British English. All Bournemouth numbers are
+*Authored 2026-07-06 (repo at commit `8a85edd`). British English. All Bournemouth numbers are
 provisional / local-internal, licence-pending (Phase 0).*
 
 | Volatile fact | Stated value | One-line re-verify |

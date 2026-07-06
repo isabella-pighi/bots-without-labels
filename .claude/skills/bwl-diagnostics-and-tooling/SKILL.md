@@ -330,7 +330,7 @@ Interpretation checklist when a trace surprises you:
 
 ## Provenance and maintenance
 
-Authored 2026-07-06, repo at commit `6fd33ac` (branch `main`). Every command
+Authored 2026-07-06, repo at commit `8a85edd` (branch `main`). Every command
 above was executed against that tree; both example traces are pasted from real
 runs (the click-log one from `generate --seed 0`; the flow one from a
 hand-built broadcaster fixture). Recorded benchmark/attribution numbers are

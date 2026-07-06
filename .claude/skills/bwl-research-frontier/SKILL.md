@@ -408,14 +408,14 @@ band" error the Phase-1 diagnosis already refuted.
 ## Provenance and maintenance
 
 Authored 2026-07-04 (revised against repo state on this session). Repo at commit
-**6fd33ac** (`git rev-parse --short HEAD` at authoring). All numbers below are
+**8a85edd** (`git rev-parse --short HEAD` at authoring). All numbers below are
 recorded benchmark figures cited from `evaluation/FINDINGS.md` /
 `evaluation/BENCHMARKS.md` — **not** re-run here (the full suite is slow and the
 captures are gitignored).
 
 | Volatile fact | One-line re-verification |
 |---|---|
-| HEAD commit is 6fd33ac | `git -C /Users/isabella/bots-without-labels rev-parse --short HEAD` |
+| HEAD commit is 8a85edd | `git -C /Users/isabella/bots-without-labels rev-parse --short HEAD` |
 | CTU-13 sc1 1.000/0.978, sc3 0.985/0.929; CICIDS 0.998/0.846 | `grep -nE '0\.978\|0\.929\|0\.846' /Users/isabella/bots-without-labels/evaluation/BENCHMARKS.md` |
 | Residual FP is mostly ML-only (Rbot 151/151; CICIDS ~253/358) | `grep -n "ML-only" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
 | Decision rule + heuristic cutoff 0.70 | `grep -n "HEURISTIC_CUTOFF\|is_bot =" /Users/isabella/bots-without-labels/bots_without_labels/pipeline.py` |

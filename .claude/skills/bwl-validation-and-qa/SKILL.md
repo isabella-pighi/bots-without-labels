@@ -89,7 +89,7 @@ These are the recurring ways a number gets mis-stated in this repo. Each has a s
 
 The current registry numbers, how to reproduce each, and the **test that pins it** so
 a silent regression fails the suite even when synthetic stays green. Numbers are from
-`evaluation/BENCHMARKS.md` (2026-07-04 branch, commit 6fd33ac); re-verify with the
+`evaluation/BENCHMARKS.md` (2026-07-04 branch, commit 8a85edd); re-verify with the
 commands in Provenance.
 
 | Dataset (tier) | Recall / Precision / Flag | Base rate | Reproduce (needs gitignored data) | Guarding test → **pinned bound** |
@@ -222,7 +222,7 @@ outputs are claims** subject to the same discipline.
 
 ## Provenance and maintenance
 
-Authored 2026-07-06. Repo at commit `6fd33ac` (`git rev-parse HEAD` to check drift).
+Authored 2026-07-06. Repo at commit `8a85edd` (`git rev-parse HEAD` to check drift).
 All numbers below are from `evaluation/BENCHMARKS.md` on that branch and are **measured
 on gitignored local data** — treat them as the recorded scoreboard, not a live re-run.
 

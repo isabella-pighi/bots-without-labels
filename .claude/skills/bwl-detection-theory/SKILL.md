@@ -347,7 +347,7 @@ rank-ordered buckets, ties spread by first-appearance order.
 
 ## Provenance and maintenance
 
-Authored 2026-07-06. Repo at commit `6fd33ac` ("Refresh roadmap: fold shipped arcs into a Shipped
+Authored 2026-07-06. Repo at commit `8a85edd` ("Refresh roadmap: fold shipped arcs into a Shipped
 section"). All numeric examples were verified with `uv run python -c` against the working tree on this
 commit; benchmark figures are cited from `evaluation/BENCHMARKS.md`, not re-run here.
 

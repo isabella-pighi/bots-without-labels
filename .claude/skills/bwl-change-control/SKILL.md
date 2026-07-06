@@ -259,8 +259,8 @@ PM-commits-only protocol. It was not quietly forgiven: TODO.md follow-up G
 exists to route it through Codex review retroactively, recorded as "protocol
 debt rather than correctness risk" (the change has since been repeatedly
 benchmark-verified). The repo's recent history contains **further** direct-to-
-main engine commits of the same class — `43b5e86` (constants/docstrings across
-`bots_without_labels/*.py`) and `1a4abeb` (`anomaly.py`/`pipeline.py` feature
+main engine commits of the same class — `543129a` (constants/docstrings across
+`bots_without_labels/*.py`) and `fc4e3c7` (`anomaly.py`/`pipeline.py` feature
 deviations); both are now listed under follow-up G for the same retroactive
 review. Do not read these as a relaxation of the rule: the HCOM protocol
 remains canonical (owner-confirmed 2026-07-04), and every one of them is
@@ -314,7 +314,7 @@ beats memory").
 
 ## Provenance and maintenance
 
-Authored 2026-07-04, repo at commit `6fd33ac`. All role rules, message
+Authored 2026-07-04, repo at commit `8a85edd`. All role rules, message
 formats, checklists, and git policy were read directly from
 `development approach/` at that commit; incident commits were verified with
 `git show`. The one claim not derivable from the repo alone — that the HCOM
@@ -328,7 +328,7 @@ follow-up G, so the reconciliation is grounded rather than asserted.
 | `development approach/` is still the canonical protocol dir | `ls "development approach/"` |
 | Message formats unchanged | `grep -n "REVIEW_REQUEST" "development approach/team_instructions.md"` |
 | PM-only-committer rule unchanged | `grep -n "must not" -A 8 "development approach/prompts/product_manager_prompt.md" \| head -20` |
-| Follow-up G lists all direct-engine-commit debt (98646c1, 43b5e86, 1a4abeb) | `grep -n "98646c1\|43b5e86\|1a4abeb" TODO.md` |
+| Follow-up G lists all direct-engine-commit debt (98646c1, 543129a, fc4e3c7) | `grep -n "98646c1\|543129a\|fc4e3c7" TODO.md` |
 | WIP incident commits exist as described | `git log --oneline b6023d4 e6ded7a -2` |
 | Decision-rule constants (0.70 / 2% cap) unchanged | `grep -n "HEURISTIC_CUTOFF\|MAX_ML_FLAG_RATE" bots_without_labels/pipeline.py` |
 | Task-branch convention unchanged | `grep -n "agent/<task-id>" "development approach/team_instructions.md"` |

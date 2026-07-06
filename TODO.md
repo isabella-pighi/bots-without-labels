@@ -68,10 +68,10 @@ per commit:
 
 - `98646c1` — per-entity baselining + CICIDS benchmark (`features.py` /
   `rules.py`).
-- `43b5e86` — constants extraction, tuning-param exposure, docstrings across
+- `543129a` — constants extraction, tuning-param exposure, docstrings across
   `bots_without_labels/*.py` (behaviour-preserving; benchmarks verified
   bit-identical, so low correctness risk).
-- `1a4abeb` — ML-tail feature deviations (`anomaly.py` / `pipeline.py`;
+- `fc4e3c7` — ML-tail feature deviations (`anomaly.py` / `pipeline.py`;
   additive and decision-neutral — pay-per-use, no change to scoring or
   decisions).
 

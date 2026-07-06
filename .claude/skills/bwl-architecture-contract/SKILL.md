@@ -314,7 +314,7 @@ These are open or limited-evidence, on the record. Do not present any of them as
 
 ## Provenance and maintenance
 
-Authored 2026-07-04 (repo re-verified at commit `6fd33ac`; benchmark numbers as recorded in
+Authored 2026-07-04 (repo re-verified at commit `8a85edd`; benchmark numbers as recorded in
 `evaluation/BENCHMARKS.md` / `FINDINGS.md` on that branch). British English. All constants and the test
 count were verified by import/collection at authoring time.
 

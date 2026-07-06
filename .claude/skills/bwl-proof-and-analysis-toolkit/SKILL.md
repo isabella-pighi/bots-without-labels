@@ -59,7 +59,7 @@ Definitions used throughout (one line each):
 
 Environment: `uv` drives everything (`bwl-build-run-operate`). The isolation-forest backend needs
 `--extra eif`; without it the ML path falls back and benchmark numbers will not reproduce. All the
-snippets below were run green against the repo at commit 6fd33ac.
+snippets below were run green against the repo at commit 8a85edd.
 
 ---
 
@@ -207,7 +207,7 @@ for cut in (0.50, 0.70, 0.90):
     print(f"cut={cut:.2f} flagged={int(r.is_bot.sum())} rules={sorted(fired)}")
 ```
 
-Verified output at commit 6fd33ac: `cut=0.50 flagged=810`, `cut=0.70 flagged=810`, `cut=0.90 flagged=0` —
+Verified output at commit 8a85edd: `cut=0.50 flagged=810`, `cut=0.70 flagged=810`, `cut=0.90 flagged=0` —
 i.e. the strong rules (`asymmetric_degree`, `entity_monotony`, weight 0.70) sit exactly on the 0.70 line,
 so raising the cut above 0.70 silences the whole heuristic. That is a *design fact you can see*, not a
 guess: no single strong rule reaches 0.70 by more than its own weight.
@@ -259,7 +259,7 @@ for factor in (1, 10, 100, 200):
 rules.DEGREE_ASYMMETRY = orig
 ```
 
-Verified output at 6fd33ac on the fixture below (source out-degree 90, in-degree 0): fires on 90 rows at
+Verified output at 8a85edd on the fixture below (source out-degree 90, in-degree 0): fires on 90 rows at
 factors 1 and 10, **0** at 100 and 200. The exact break point here (≈90) is the *fixture's* out-degree, not
 CTU-13's — the point of the recipe is the *shape* (a stable band with a hard cliff), which you then confirm
 on the real labelled split. Never read a synthetic break point as the field number.
@@ -362,8 +362,8 @@ that the tests still pass (tests allow ranges; a refactor must not move the numb
 4. **Diff.** Identical ⇒ behaviour preserved. Any delta ⇒ the refactor changed behaviour and is no longer a
    refactor — it needs the full review path in `bwl-change-control`.
 
-**Worked example — the 2026-07-03 consolidation audit.** The commits `1f69f4b` ("Deduplicate test fixtures
-via shared conftest") and `529aee3` ("Consolidate benchmark boilerplate into a shared harness") moved code
+**Worked example — the 2026-07-03 consolidation audit.** The commits `3e93f14` ("Deduplicate test fixtures
+via shared conftest") and `3f3f770` ("Consolidate benchmark boilerplate into a shared harness") moved code
 without changing logic. They were validated as behaviour-preserving because the harness fixes the seed
 (`DEFAULT_SEED = 7`, documented in-source as *"fixed (not varied per run) so measured numbers reproduce"*)
 and the benchmark reports diffed identically — the protected gates (CICIDS 0.998/0.846/0.037, CTU-13 sc1
@@ -405,7 +405,7 @@ review path — see `bwl-change-control` and `bwl-research-methodology` for what
 
 ## Provenance and maintenance
 
-Authored 2026-07-04; repo at commit `6fd33ac`. All snippets and the two sweep outputs were executed green
+Authored 2026-07-04; repo at commit `8a85edd`. All snippets and the two sweep outputs were executed green
 against that commit. Worked-example numbers are cited from `evaluation/FINDINGS.md` /
 `evaluation/BENCHMARKS.md` (docs of record) — they are *recorded* benchmark results, not fresh runs; do not
 present them as production accuracy or as fraud verdicts (see `bwl-external-positioning`).
@@ -422,7 +422,7 @@ present them as production accuracy or as fraud verdicts (see `bwl-external-posi
 | CTU-13 `asymmetric_degree` fire | 2,000/2,000, 0 FP, carries 1,774 | `grep -n "2,000 of 2,000\|1,774\|1,774" evaluation/FINDINGS.md` |
 | Rbot fan-in regression → fix | 0.056 → 0.929, recall 0.985 | `grep -n "0.056\|0.929" evaluation/FINDINGS.md` |
 | Predicted-FP origin commit | `2a3f362` (2026-06-25) | `git show -s --format=%ci 2a3f362` |
-| Refactor-audit commits | `1f69f4b`, `529aee3` (2026-07-03) | `git log --oneline --since=2026-07-02 --until=2026-07-04` |
+| Refactor-audit commits | `3e93f14`, `3f3f770` (2026-07-03) | `git log --oneline --since=2026-07-02 --until=2026-07-04` |
 | Recorded gate numbers | CICIDS 0.998/0.846/0.037; CTU sc1 1.000/0.978/0.033; sc3 0.985/0.929/0.034; UNSW 0.122/0.198/0.020 | `grep -n "0.846\|0.978\|0.929\|0.198" evaluation/BENCHMARKS.md` |
 
 Numbers marked "~" are approximate in the source docs (tie-sensitive attribution); re-run

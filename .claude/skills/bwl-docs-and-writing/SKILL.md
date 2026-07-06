@@ -292,7 +292,7 @@ scope**. Trailer: `Co-Authored-By:` as your environment's commit rules specify.
 
 ## Provenance and maintenance
 
-Authored 2026-07-04 (repo at commit `6fd33ac`). Verify volatile facts before relying
+Authored 2026-07-04 (repo at commit `8a85edd`). Verify volatile facts before relying
 on them — the numbers and doc structure drift as the project advances.
 
 | Volatile fact | One-line re-verification |

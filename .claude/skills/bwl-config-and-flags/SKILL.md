@@ -267,9 +267,9 @@ least one held-out labelled capture with a no-regression guard on the others.
 
 ## Provenance and maintenance
 
-Authored 2026-07-06. Repo at commit `6fd33ac` ("Refresh roadmap: fold shipped arcs into a Shipped
+Authored 2026-07-06. Repo at commit `8a85edd` ("Refresh roadmap: fold shipped arcs into a Shipped
 section"). All constant values were verified by import (`uv run python -c "import …"`) and by reading
-source, not from memory. The author brief referenced commit `6fd33ac`; note the brief's frontmatter date
+source, not from memory. The author brief referenced commit `8a85edd`; note the brief's frontmatter date
 stamp (2026-07-04) predates this authoring session — trust the re-verify commands over any date.
 
 | Volatile fact | One-line re-verify command |

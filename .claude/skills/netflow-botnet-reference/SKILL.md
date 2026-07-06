@@ -149,7 +149,7 @@ the recall. (Mechanism/maths: `bwl-detection-theory`; incident: `bwl-failure-arc
 
 One section per real capture. **None of these files are committed** (`data/` is gitignored except its
 README); download from the cited source. All numbers below are **recorded** in `evaluation/BENCHMARKS.md` /
-`FINDINGS.md` (verified 2026-07-06 at repo commit 6fd33ac) — they are *synthetic-free, externally-labelled*
+`FINDINGS.md` (verified 2026-07-06 at repo commit 8a85edd) — they are *synthetic-free, externally-labelled*
 measurements, but still single-capture results, **not** production guarantees and **not** fraud verdicts.
 
 ### CTU-13 — the primary fine-clock benchmark (two families)
@@ -305,7 +305,7 @@ These ground the *anomaly signal*; none is a ground-truth fraud label. Full deta
 
 ## Provenance and maintenance
 
-Authored 2026-07-04 (content re-verified 2026-07-06); repo at commit 6fd33ac. Numbers cited from
+Authored 2026-07-04 (content re-verified 2026-07-06); repo at commit 8a85edd. Numbers cited from
 `evaluation/BENCHMARKS.md` and `evaluation/FINDINGS.md` and marked as recorded, not re-run (the full suite is
 slow and gitignored data may be absent). Re-verify each volatile fact with the one-liner below.
 
@@ -320,4 +320,4 @@ slow and gitignored data may be absent). Re-verify each volatile fact with the o
 | Rule names owning each shape | `grep -nE "entity_monotony\|asymmetric_degree\|MIN_HUB_DEGREE" bots_without_labels/rules.py` |
 | Synthetic archetype names | `grep -nE "ARCHETYPES\|DETECTABLE_ARCHETYPES" bots_without_labels/synthetic.py` |
 | Decision rule / 2% rate cap | see `bwl-config-and-flags`, `bwl-detection-theory` |
-| Repo commit these facts were pinned to | `git log --oneline -1` (expect 6fd33ac or a documented successor) |
+| Repo commit these facts were pinned to | `git log --oneline -1` (expect 8a85edd or a documented successor) |

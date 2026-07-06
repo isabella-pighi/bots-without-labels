@@ -248,7 +248,7 @@ If any box is empty, the result is a **candidate**, not an accepted result. Labe
 
 ## Provenance and maintenance
 
-Authored 2026-07-06 (repo at commit `6fd33ac`). British English. All numbers below are cited from the
+Authored 2026-07-06 (repo at commit `8a85edd`). British English. All numbers below are cited from the
 docs of record or git history at that commit; re-verify before quoting in a later session.
 
 | Volatile fact | Stated value | One-line re-verify |

@@ -171,7 +171,7 @@ Checklist — a claim is reproducible only if **all** are present:
       threshold` (Kneedle-derived, rate-capped at 2%). A precision number is meaningless without the
       operating point that produced it.
 
-**Golden numbers as of commit 6fd33ac (cite the source doc, not memory):**
+**Golden numbers as of commit 8a85edd (cite the source doc, not memory):**
 
 | Benchmark | Recall | Precision | Flag rate | Base rate | Source |
 |---|---|---|---|---|---|
@@ -218,7 +218,7 @@ failure.
 
 ## Provenance and maintenance
 
-Authored 2026-07-04. Repo at commit 6fd33ac (`Refresh roadmap: fold shipped arcs into a Shipped
+Authored 2026-07-04. Repo at commit 8a85edd (`Refresh roadmap: fold shipped arcs into a Shipped
 section`). Numbers cross-checked against `evaluation/BENCHMARKS.md` and `evaluation/FINDINGS.md` at that
 commit; constants read from source. British English; imperative runbook voice.
 

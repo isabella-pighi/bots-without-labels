@@ -14,7 +14,7 @@ description: >
 
 # Build, run, and operate Bots Without Labels
 
-Imperative runbook. Every command below was executed against the repo at commit `6fd33ac`
+Imperative runbook. Every command below was executed against the repo at commit `8a85edd`
 (see Provenance). **There is no CI.** No GitHub Actions, no server-side gate — validation is
 local discipline. If you do not run the checks yourself, nobody does. That is the single most
 important operational fact in this file.
@@ -54,7 +54,7 @@ uv run --extra eif python -m pytest        # verifies the install; expect ~80+ p
 ```
 
 That single command *is* the install check: it syncs the env, pulls the optional EIF backend,
-and runs the suite (~80+ tests at `6fd33ac`; get the live count with
+and runs the suite (~80+ tests at `8a85edd`; get the live count with
 `uv run python -m pytest --collect-only -q | tail -1`). A green run means the
 install is sound.
 
@@ -100,7 +100,7 @@ when any required check fails. Use it as the first move when a run misbehaves on
 
 ### Dev tooling (what "clean" means here)
 
-| Tool | Command | Expected at `6fd33ac` |
+| Tool | Command | Expected at `8a85edd` |
 | --- | --- | --- |
 | black | `uv run black --check bots_without_labels/` | `All done ✨`, files unchanged (line-length **88**, set in `pyproject.toml`) |
 | pylint | `uv run pylint bots_without_labels` | **10/10** (design-metric checks disabled in `pyproject.toml`, mirroring Google's pylintrc) |
@@ -320,14 +320,14 @@ uv run --extra eif python -m bots_without_labels.cli run --input /tmp/tiny.tsv -
 cat /tmp/out/artifacts/summary.json    # check ml_backend == "eif", sane bot_rate
 ```
 
-Verified end-to-end at `6fd33ac`: 230 events, 14 flagged (6.09%), `ml_backend: "eif"`,
+Verified end-to-end at `8a85edd`: 230 events, 14 flagged (6.09%), `ml_backend: "eif"`,
 `ml_threshold_method: "kneedle_descending"`.
 
 ---
 
 ## Provenance and maintenance
 
-Authored **2026-07-04**; verified against the repo at commit **`6fd33ac`** on **2026-07-06** by
+Authored **2026-07-04**; verified against the repo at commit **`8a85edd`** on **2026-07-06** by
 running the cheap commands (generate + run + doctor on a `/tmp` log, `pytest --collect-only`,
 `black --check`, forced-fallback backend probe). There is no CI; treat every number as
 re-verifiable, not guaranteed-current.

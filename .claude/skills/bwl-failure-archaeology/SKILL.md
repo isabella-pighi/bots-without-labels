@@ -32,7 +32,7 @@ supplies the story behind it.
 
 ## How to read the timeline
 
-39 linear commits, 2026-06-22 → 2026-07-04 (repo at `6fd33ac`). The `git log` order is
+39 linear commits, 2026-06-22 → 2026-07-04 (repo at `8a85edd`). The `git log` order is
 topological, **not** date order — verify a hash's real date with
 `git show -s --format='%ci %s' <hash>`. Narrative order of the work (not log order):
 
@@ -45,7 +45,7 @@ topological, **not** date order — verify a hash's real date with
 | 5 | Actor graph (`asymmetric_degree`) + precision root-cause | `2a3f362`, `56f305d` | 06-25 → 06-29 |
 | 6 | Rbot generality + fan-in FP materialises → source fan-out | `2fe88f7`, `13e9436` | 06-29 → 06-30 |
 | 7 | Bournemouth honest negative (domain transfer) | `5f20e40`, `6c66306` | 06-30 |
-| 8 | Formalisation & engineering audits | `8dd5519`, `43b5e86`, `1f69f4b`, `529aee3`, `1a4abeb` | 06-27, 07-03/04 |
+| 8 | Formalisation & engineering audits | `8dd5519`, `543129a`, `3e93f14`, `3f3f770`, `fc4e3c7` | 06-27, 07-03/04 |
 
 The full measured narrative of arcs 4–7 is `evaluation/FINDINGS.md`; the registry with
 per-benchmark caveats is `evaluation/BENCHMARKS.md`. Cite those as the docs of record.
@@ -312,15 +312,15 @@ matters as much as the wins.
 
 ---
 
-## Arc 8 — Formalisation and engineering audits (8dd5519, 43b5e86, 1f69f4b, 529aee3, 1a4abeb)
+## Arc 8 — Formalisation and engineering audits (8dd5519, 543129a, 3e93f14, 3f3f770, fc4e3c7)
 
 - **`8dd5519` (06-27)** — the ad-hoc scripts became a tracked, skip-if-absent benchmark
   suite behind one runner (`evaluation/run_benchmarks.py`).
-- **`43b5e86`, `1f69f4b`, `529aee3` (07-03)** — engineering hygiene, not behaviour: extract
+- **`543129a`, `3e93f14`, `3f3f770` (07-03)** — engineering hygiene, not behaviour: extract
   constants + expose tuning params + complete docstrings; deduplicate test fixtures via a
   shared `conftest`; consolidate benchmark boilerplate into `evaluation/harness.py`. No
   measured numbers changed.
-- **`1a4abeb` (07-04)** — ML-tail flags now carry their top feature deviations (robust z +
+- **`fc4e3c7` (07-04)** — ML-tail flags now carry their top feature deviations (robust z +
   batch percentile) in `selected_events.json` and via `DetectionResult.feature_deviations()`
   (TODO item 3). Motivated directly by arc 4's residual: after rule calibration, *all*
   remaining FPs were tier-3 ML-only flags, which were previously opaque.
@@ -346,7 +346,7 @@ matters as much as the wins.
 | Item | State | Where tracked |
 |---|---|---|
 | **Fixed 10th-percentile diversity quantile** | Brittle: on real flow data many entities share identical diversity, so the quantile lands on a **tie at a bin edge** and the cut is sensitive to tie-breaking. Needs an *adaptive* gap/knee cut — a redesign, **deferred** to threshold-calibration work. | FINDINGS §"The honest ceiling"; `bwl-research-frontier` |
-| **ML/EIF-only false positives** | ~253 of CICIDS's 358 FPs are ML-path, a separate calibration question. Partly addressed by explanations (`1a4abeb`), not by score calibration. | Arcs 4d, 8; TODO item 10 |
+| **ML/EIF-only false positives** | ~253 of CICIDS's 358 FPs are ML-path, a separate calibration question. Partly addressed by explanations (`fc4e3c7`), not by score calibration. | Arcs 4d, 8; TODO item 10 |
 | **Fan-in-bot generality** | *Guarded* by CICIDS no-regression, **not** positively proved — no natively-labelled fan-in-bot benchmark exists. | Arc 6; FINDINGS takeaway |
 | **Per-entity change review debt** | `98646c1` bypassed PM-commits-only protocol; benchmark-verified but not Codex-reviewed. | TODO follow-up G; `bwl-change-control` |
 
@@ -370,7 +370,7 @@ label are genuinely scarce — see `bwl-external-positioning` before claiming ot
 
 ## Provenance and maintenance
 
-Authored 2026-07-04 (last repo review 2026-07-06); repo at commit `6fd33ac`. This is a
+Authored 2026-07-04 (last repo review 2026-07-06); repo at commit `8a85edd`. This is a
 *historical* chronicle — the commit hashes and root-cause stories are stable, but the
 "current" measured numbers drift as new arcs land. Re-verify before quoting a live number.
 
