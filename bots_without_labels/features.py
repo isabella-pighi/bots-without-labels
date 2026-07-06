@@ -21,7 +21,18 @@ columns are present:
 * the primary **timestamp** -> hour of day, same-instant concentration, a local
   burst count within the categorical context, and inter-arrival regularity
   (``hour`` / ``same_time__conc`` / ``burst{W}s__conc`` / ``dt__std`` /
-  ``dt__cv``).
+  ``dt__cv`` / ``has_regular_timing``).
+
+The rules read inter-arrival regularity from ``FeatureContext.dt_cv``, where rows
+with no burst-run keep the high :data:`SPARSE_TIMING_SENTINEL` so a threshold rule
+never mistakes them for regular. That literal sentinel must **not** reach the
+isolation model: fed raw it would dominate the ``dt__*`` axes and encode "had a
+burst-run at all" rather than cadence. So the matrix decouples the two -- sparse
+rows are median-filled (the same imputation numeric columns use) and a
+``has_regular_timing`` 0/1 indicator carries which rows actually had a measured
+cadence. On fine-clock logs this preserves the genuine cadence signal; on coarse
+logs where almost every row is sparse the axis collapses to a constant and the
+model simply ignores it.
 
 Identifier columns, URL source columns, and non-primary timestamps contribute no
 features.
@@ -402,8 +413,16 @@ def build_features(
         context.dt_cv = dt_cv
         context.run_size = run_size
         add(f"burst{burst_window_seconds}s__conc", np.log1p(burst), "burst")
-        add("dt__std", np.log1p(dt_std), "timing")
-        add("dt__cv", np.log1p(dt_cv), "timing")
+        # Decouple the rule sentinel from the ML matrix. context.dt_cv keeps
+        # SPARSE_TIMING_SENTINEL on burst-run-less rows (the regular_timing rule
+        # needs it); but feeding that literal into the isolation model would make
+        # the dt axes encode "had a burst-run at all" rather than cadence. So the
+        # matrix median-fills the sparse rows and a 0/1 indicator marks which rows
+        # carried a real measurement.
+        measured = dt_cv != SPARSE_TIMING_SENTINEL
+        add("has_regular_timing", measured.astype(float), "timing")
+        add("dt__std", _matrix_timing(dt_std, measured), "timing")
+        add("dt__cv", _matrix_timing(dt_cv, measured), "timing")
 
     # Per-entity behavioural diversity. An automated actor (botnet host, scraper,
     # click farm) emits internally self-similar events; a popular *legitimate*
@@ -960,6 +979,25 @@ def _on_grid(times: pd.Series, grid: float) -> np.ndarray:
     on_grid = circular <= tolerance_ns
     on_grid[~valid] = False
     return on_grid
+
+
+def _matrix_timing(values: np.ndarray, measured: np.ndarray) -> np.ndarray:
+    """Matrix-ready ``log1p`` of a dt statistic with the sparse sentinel removed.
+
+    ``values`` carries :data:`SPARSE_TIMING_SENTINEL` on rows with no burst-run
+    (``measured`` False). Feeding that literal to the isolation model would make
+    the axis encode presence-of-a-run rather than cadence, so the sparse rows are
+    median-filled with the typical *measured* cadence -- the same imputation the
+    numeric columns use. When no row was measured the median is undefined and the
+    axis collapses to zeros (a constant the model ignores), never NaN.
+    """
+
+    filled = np.asarray(values, dtype=float).copy()
+    if measured.any():
+        filled[~measured] = float(np.median(filled[measured]))
+    else:
+        filled[:] = 0.0
+    return np.log1p(filled)
 
 
 def _temporal_context(

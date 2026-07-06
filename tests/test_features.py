@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from bots_without_labels.features import (
+    SPARSE_TIMING_SENTINEL,
     _actor_endpoint_columns,
     _entity_columns,
     build_features,
@@ -116,12 +117,55 @@ def test_feature_families_present_for_each_role(tmp_path: Path) -> None:
         "burst10s__conc",
         "dt__std",
         "dt__cv",
+        "has_regular_timing",
     }
     assert expected <= set(fs.names)
     # query is high-cardinality free text, so it produced text features.
     assert log.schema.role_of("query") == "text"
     assert fs.families["region__conc"] == "concentration"
     assert fs.families["query__entropy"] == "text"
+
+
+def test_sparse_timing_sentinel_decoupled_from_matrix(tmp_path: Path) -> None:
+    """The rule sentinel must not leak into the ML matrix.
+
+    The rules read ``context.dt_cv`` where burst-run-less rows keep
+    ``SPARSE_TIMING_SENTINEL``; the matrix must median-fill those rows instead and
+    flag them via ``has_regular_timing`` so the isolation model never sees the
+    magic literal. The click log is mostly scattered, so most rows are sparse.
+    """
+
+    # A tight regular run (gaps of 2s -> one burst-run of 5) mixed with isolated
+    # events spaced minutes apart (runs of size 1 -> the sparse sentinel).
+    rows = ["id,ts,region,query"]
+    for i in range(5):
+        rows.append(f"r{i},2020-01-01 00:00:{2 * i:02d},us,beacon")
+    for i in range(6):
+        rows.append(f"s{i},2020-01-01 0{1 + i}:00:00,us,scattered {i}")
+    path = tmp_path / "mixed_timing.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    log = load(path)
+    fs = build_features(log.frame, log.schema)
+
+    # The rule path still carries the sentinel on sparse rows.
+    sparse = fs.context.dt_cv == SPARSE_TIMING_SENTINEL
+    assert sparse.any() and not sparse.all()
+
+    idx = {name: i for i, name in enumerate(fs.names)}
+    dt_std = fs.matrix[:, idx["dt__std"]]
+    dt_cv = fs.matrix[:, idx["dt__cv"]]
+    indicator = fs.matrix[:, idx["has_regular_timing"]]
+
+    # No column carries log1p(999); nothing is NaN.
+    polluted = np.log1p(SPARSE_TIMING_SENTINEL)
+    assert not np.any(np.isclose(dt_std, polluted))
+    assert not np.any(np.isclose(dt_cv, polluted))
+    assert np.isfinite(fs.matrix).all()
+
+    # The indicator is exactly the measured mask (0/1, sparse rows -> 0).
+    assert set(np.unique(indicator)) <= {0.0, 1.0}
+    np.testing.assert_array_equal(indicator == 0.0, sparse)
 
 
 def test_matrix_shape_and_finiteness(tmp_path: Path) -> None:

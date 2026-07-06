@@ -113,7 +113,8 @@ intermediate stages, kept to show the progression:
 | Pre-fix (global concentration capped) | 0.022 | 0.018 | — |
 | Per-entity diversity baseline | 0.998 | 0.144 | 0.219 |
 | + relational hub discriminator (historical) | 0.998 | 0.441 | 0.072 |
-| **+ later timing calibration (current branch)** | **0.998** | **0.846** | **0.037** |
+| + later timing calibration | 0.998 | 0.846 | 0.037 |
+| **+ ML-tail sentinel decouple (current branch)** | **0.998** | **0.879** | **0.036** |
 
 The last row reproduces today with
 `uv run --extra eif python -m evaluation.cicids_bot_benchmark --zip data/GeneratedLabelledFlows.zip`.
@@ -125,7 +126,7 @@ timing calibration.
 
 ## The honest ceiling
 
-Precision 0.846 is the current measured number on *this* labelled capture — it is
+Precision 0.879 is the current measured number on *this* labelled capture — it is
 not a production guarantee, and not proof that any flagged row is fraud. Four
 caveats keep it honest:
 
@@ -134,7 +135,7 @@ caveats keep it honest:
   flag means "monotone fan-in star", not "confirmed bot". The benchmark can
   measure precision only because CICIDS ships labels; the running system cannot.
 - **It is one attack family and one hub.** The lift leans on a single, uniquely
-  separable C2 (`205.174.165.73`). We did not tune `K` to it, but a 0.846 figure
+  separable C2 (`205.174.165.73`). We did not tune `K` to it, but a 0.879 figure
   from one capture must not be read as a general precision, nor as evidence that
   `K = 3` is universally correct.
 - **Benign monotone hubs remain a plausible risk for the `entity_monotony`
@@ -143,17 +144,18 @@ caveats keep it honest:
   narrows this risk; it does not eliminate it. Where timestamp resolution allows,
   sub-minute timing cadence is the next discriminator to separate a beacon from a
   busy benign hub.
-- **The headline 0.846 is the whole detector, not the hub gate, and the residual
-  error is mostly not heuristic.** Precision 0.846 means 15.4% of *all* flagged
-  rows are not labelled bot in this capture — but that is the detector as a whole.
-  A checked per-rule diagnostic on this branch (2,320 flags; 358 false positives)
-  shows `entity_monotony` fired on 2,067 rows with ~104 false positives
-  (fire-precision 0.949) and carries 1,938 of the 1,962 true-positive catches. Of
-  the 358 false positives, ~253 come from the ML/EIF scorer alone (ML-only flags,
+- **The residual error is mostly not heuristic — and its ML-only tail has since been
+  cut.** *Before* the ML-tail decouple, precision 0.846 meant 15.4% of *all* flagged
+  rows were not labelled bot in this capture — but that is the detector as a whole.
+  A checked per-rule diagnostic on that pre-fix branch (2,320 flags; 358 false
+  positives) showed `entity_monotony` fired on 2,067 rows with ~104 false positives
+  (fire-precision 0.949) and carried 1,938 of the 1,962 true-positive catches. Of
+  the 358 false positives, ~253 came from the ML/EIF scorer alone (ML-only flags,
   attributable to no heuristic rule) and ~104 from `entity_monotony`; the other
-  heuristic rules contribute essentially none. So the residual error is *not*
-  dominated by benign monotone hubs — most of it is the ML path, a separate
-  calibration question.
+  heuristic rules contributed essentially none. So the residual error was *not*
+  dominated by benign monotone hubs — most of it was the ML path. That ML-only tail is
+  exactly what the sparse-timing-sentinel decouple addressed, lifting precision to
+  **0.879** (see "Decoupling the sparse-timing sentinel from the ML feature matrix").
 
 Two further limits are tracked as follow-ups, not fixed on this branch:
 
@@ -493,6 +495,64 @@ web bots**. Closing the gap is not
 calibration; it needs **web-specific signals** — interaction biometrics such as mouse
 dynamics, which Bournemouth happens to carry — a separate future capability, tracked in
 `TODO.md` (P3, item 12), not a tweak to the existing rules.
+
+## Decoupling the sparse-timing sentinel from the ML feature matrix
+
+The CICIDS honest ceiling above named the residual error precisely: of 358 false
+positives, ~253 were **ML-only** — flagged by the Extended Isolation Forest with no
+heuristic rule behind them — and it called that "a separate calibration question".
+This is that question, answered.
+
+The engine marks rows it cannot time — an actor with too few events to estimate an
+inter-arrival cadence — with a sentinel value (`SPARSE_TIMING_SENTINEL = 999`) in its
+`dt` statistics. That sentinel was flowing straight into the **EIF feature matrix** on
+the `dt__std` and `dt__cv` axes. A large constant sitting among real, small dispersion
+values reads to an isolation forest as extreme spread, so the forest carved those
+sparse-timing rows out as anomalies — manufacturing ML-only false positives from an
+*absence* of data, not a presence of signal.
+
+### The fix: median-fill the matrix, keep the rule input untouched
+
+The feature matrix now **median-fills** the `dt` axes for sparse-timing rows and adds a
+single `has_regular_timing` 0/1 indicator column, so "we could not time this actor" is
+represented as a flag rather than as a fake extreme value (new helper `_matrix_timing`).
+Crucially the cadence *rule* is left alone: `regular_timing` reads `context.dt_cv`,
+which this change does not touch, so that heuristic is **byte-identical** — cadence
+detection stays owned by the rule, and only the ML axis is recalibrated. A dedicated
+test (`tests/test_features.py::test_sparse_timing_sentinel_decoupled_from_matrix`) pins
+the decoupling.
+
+The effect, measured end-to-end (85 tests pass; verified by @ml-engineer-reviewer- on
+the actual diff): CICIDS/Ares precision rises **0.846 → 0.879**, recall held at
+**0.998**, flag rate **0.037 → 0.036** — the lift comes from shrinking exactly the
+ML-only tail the ceiling identified. On the microsecond-clocked CTU-13 sc1 (Neris) it
+costs a small amount: precision **0.978 → 0.971**, recall held at **1.000**, flag rate
+0.033. Net across the two primary captures: **+3.3 pts CICIDS, -0.7 pts CTU**, both
+recalls flat.
+
+A blunter variant — **dropping the `dt` features from the matrix entirely** — was
+**rejected**: it cost CTU-13 **-4.8 pts** precision, because the `dt` axes still carry
+real discriminating signal on a fine-resolution clock. Median-fill keeps that signal
+for rows that have it while denying the sentinel a chance to masquerade as spread.
+
+*Validation (re-run on the actual diff): `uv run pytest -q` → 85 passed;
+`evaluation.cicids_bot_benchmark` → recall 0.998 / precision 0.879 / flag 0.036;
+`evaluation.ctu13_bot_benchmark` → recall 1.000 / precision 0.971 / flag 0.033.
+Numbers confirmed by the ML reviewer against the measured tables before entry.*
+
+### The honest ceiling (ML-tail decouple)
+
+Read this as an anomaly-axis calibration on two captures, not a general precision gain.
+
+- **It is an anomaly-axis calibration, not a new labelled-precision guarantee.** The
+  win is a cleaner EIF ranking on one capture; the scores remain rank-order signals
+  under uncertainty, never calibrated fraud probabilities.
+- **It is a small cross-capture tradeoff, judged net-positive.** CICIDS +3.3 pts
+  against CTU -0.7 pts. That is a value judgement on two captures of two families, not
+  proof the tradeoff generalises to unseen data.
+- **The recomputed per-rule attribution is pending.** The exact new ML-only false
+  positive count on CICIDS (was ~253) needs a diagnostic re-run before it is
+  registered; the CICIDS attribution table in `BENCHMARKS.md` is flagged pre-fix.
 
 ## Takeaway
 

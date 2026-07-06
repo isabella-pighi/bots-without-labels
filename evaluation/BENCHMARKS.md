@@ -42,15 +42,15 @@ comparable, like-for-like, with the bot-specific rows.
 
 | Benchmark | Source / licence | Data shape | Labelled? | Base rate | Timestamp resolution | Entity columns (by detector) | Recall | Precision | Flag rate |
 |---|---|---|---|---|---|---|---|---|---|
-| **CICIDS2017 Friday-morning botnet (Ares)** | CIC / University of New Brunswick; academic terms (registration required) | NetFlow-style flow export; 61,966 rows (60,000 sampled benign + all bot) | Yes — `Label` ∈ {`Bot`, `BENIGN`} | 0.032 | **Minute**-quantised *at source* (`6/7/2017 8:59`) → dense-timing rules **gated off** | `Source IP` / `Destination IP` (degree floor ≈ 551) | **0.998** | **0.846** | **0.037** |
-| **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.978** | **0.033** |
+| **CICIDS2017 Friday-morning botnet (Ares)** | CIC / University of New Brunswick; academic terms (registration required) | NetFlow-style flow export; 61,966 rows (60,000 sampled benign + all bot) | Yes — `Label` ∈ {`Bot`, `BENIGN`} | 0.032 | **Minute**-quantised *at source* (`6/7/2017 8:59`) → dense-timing rules **gated off** | `Source IP` / `Destination IP` (degree floor ≈ 551) | **0.998** | **0.879** | **0.036** |
+| **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.971** | **0.033** |
 | *Generality probe —* **CTU-13 scenario 3 (Rbot)** *(second family; recall and precision now generalise after the source fan-out fix)* | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows | Yes — directional `Label`; `From-Botnet` = positive | 0.0323 | **Microsecond** → dense-timing rules **active** | actor endpoints chosen by shape | 0.985 | 0.929 | 0.034 |
 | *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` (now admitted at scale) | 1.000 | 0.519 | 0.062 |
 | *Domain-transfer, provisional —* **Bournemouth Web Bot Detection** *(web-log domain; negative result; licence-pending)* | CERTH ITI / Bournemouth University (m4d.iti.gr); **licence unclear** — research-use invited, copyright reserved | Apache access logs; 58,279 rows | Yes — folder label (`bots/` vs `humans/`) | 0.029 | Per-second | `session_id` now **admitted** by the scale-invariant selector → over-flags (the method limit, shown directly) | 0.873 | **0.028** | 0.918 |
 
 The first two rows are the **primary, bot-specific** benchmarks and are the current
 measured output on this branch. Both now hold high precision at recall ≥ 0.998
-(CICIDS 0.846, CTU-13 0.978) — the CTU-13 figure rose from an earlier 0.041 once the
+(CICIDS 0.879, CTU-13 0.971) — the CTU-13 figure rose from an earlier 0.041 once the
 broad rule that was over-flagging the diverse NetFlow background was calibrated (see
 its honest note below). The two captures still contrast deliberately on timestamp
 resolution and bot shape; that contrast, not the precision gap, is the point.
@@ -113,17 +113,19 @@ A **passive fan-in star**: many infected hosts beacon to one command-and-control
 server (`205.174.165.73`) with near-identical flows. The clock is minute-resolution
 at the source, so this benchmark isolates a **data limit** — the sub-second timing
 rules have nothing to work with. The story of this dataset is the design arc that
-took precision from *below the base rate* to 0.846.
+took precision from *below the base rate* to 0.879.
 
 | Stage | Recall | Precision | Flag rate | What changed |
 |---|---|---|---|---|
 | Pre-fix (global concentration capped) | 0.022 | 0.018 | — | Repetition/concentration downgraded to supporting-only; only sub-second timing left as strong evidence, and the clock is too coarse for it. Precision **below** the 0.032 base rate — a flagged row was *less* likely to be a bot than a random one. |
 | Per-entity diversity baseline | 0.998 | 0.144 | 0.219 | Score each actor by how self-similar *its own* events are (`entity_monotony`). Recovers recall, but a busy *legitimate* channel is just as monotonous as a beacon, so precision is low at a high flag rate. |
 | + relational hub discriminator | 0.998 | 0.441 | 0.072 | Escalate a monotone actor only if it is also a **hub** (≥ `MIN_HUB_DEGREE = 3` distinct counterparts). Removes the point-to-point benign channels diversity alone could not separate. |
-| **+ timing calibration (current)** | **0.998** | **0.846** | **0.037** | Gate the dense-timing rules off on coarse clocks (adaptively, by detected resolution), so whole-minute bins stop firing as noise. |
+| + timing calibration | 0.998 | 0.846 | 0.037 | Gate the dense-timing rules off on coarse clocks (adaptively, by detected resolution), so whole-minute bins stop firing as noise. |
+| **+ ML-tail sentinel decouple (current)** | **0.998** | **0.879** | **0.036** | Stop the sparse-timing sentinel (`SPARSE_TIMING_SENTINEL = 999`) leaking into the EIF feature matrix: median-fill the `dt__std` / `dt__cv` axes for rows with too few events to time, and add a `has_regular_timing` 0/1 indicator instead. The isolation-forest tail stops carving sparse-timing rows out as artificial outliers, so the ML-only false positives fall. `regular_timing` still reads `context.dt_cv`, untouched, so that cadence heuristic is byte-identical. |
 
-*Source: `FINDINGS.md` lines 111–124. The arc is real intermediate output, kept to
-show the progression; the last row is the current branch and reproduces today.*
+*Source: `FINDINGS.md` CICIDS history and "Decoupling the sparse-timing sentinel from
+the ML feature matrix". The arc is real intermediate output, kept to show the
+progression; the last row is the current branch and reproduces today.*
 
 **Note on the actor graph.** The `asymmetric_degree` rule does **not** fire on
 CICIDS: the actor graph builds (`Source IP` / `Destination IP` endpoints, degree
@@ -133,9 +135,11 @@ the actor rule (`FINDINGS.md` lines 121–124).
 
 ### Per-rule attribution (where the residual error lives)
 
-A checked diagnostic on this branch (`evaluation/rule_diagnostic.py`) attributes
-the flagged rows so calibration targets the rules that cost precision without
-carrying recall:
+A checked **pre-fix** diagnostic (`evaluation/rule_diagnostic.py`), taken at the
+timing-calibration revision *before* the ML-tail sentinel decouple, attributed the
+flagged rows so calibration could target the rules that cost precision without
+carrying recall. It is kept as the diagnostic that **motivated** that fix — it does
+**not** describe today's 0.879-precision / 0.036-flag worktree:
 
 | Quantity | Value |
 |---|---|
@@ -148,15 +152,23 @@ carrying recall:
 | FP from `entity_monotony` | ~104 |
 | FP from other heuristic rules | essentially none |
 
-*Source: `FINDINGS.md` lines 146–156. Reproduce with
-`uv run --extra eif python -m evaluation.rule_diagnostic --zip data/GeneratedLabelledFlows.zip`.*
+*Source: `FINDINGS.md` "The honest ceiling" (CICIDS). This table reproduces only
+against the **pre-fix / timing-calibration revision** (`uv run --extra eif python -m
+evaluation.rule_diagnostic --zip data/GeneratedLabelledFlows.zip`); on today's
+worktree the flag total and FP breakdown differ because the ML-only tail has shrunk.*
 
-The takeaway is that the 15.4% residual error is **not** dominated by benign
-monotone hubs — most of it is the ML path, a separate calibration question.
+The takeaway is that the 15.4% residual error was **not** dominated by benign
+monotone hubs — most of it was the ML path, a separate calibration question. That
+ML-only tail has **since been addressed**: decoupling the sparse-timing sentinel from
+the EIF feature matrix lifted precision **0.846 → 0.879** (recall flat 0.998) by
+shrinking exactly these ML-only fires — see "Decoupling the sparse-timing sentinel
+from the ML feature matrix" in `FINDINGS.md`. The 2,320-flag / 358-FP / ~253-ML-only
+breakdown above is the **pre-fix** diagnostic that motivated the change; the
+recomputed attribution is pending a diagnostic re-run.
 
 ### Honest ceiling (CICIDS)
 
-Precision 0.846 is the measured number on *this one labelled capture*. It is not a
+Precision 0.879 is the measured number on *this one labelled capture*. It is not a
 production guarantee and not proof any flagged row is fraud.
 
 - It is **anomaly-style evidence, not a fraud verdict** — the running system has no
@@ -170,6 +182,13 @@ production guarantee and not proof any flagged row is fraud.
 - The **diversity cut is a fixed 10th-percentile quantile**, which lands on ties at
   bin edges on real flow data; a robust fix needs an adaptive (gap/knee) cut. Tracked
   as a follow-up, not fixed on this branch.
+- **The ML-only tail has since been shrunk.** The residual error was dominated by the
+  ML/EIF path (~253 ML-only false positives); decoupling the sparse-timing sentinel
+  from the feature matrix lifted precision **0.846 → 0.879** at a flat 0.998 recall by
+  cutting exactly that tail. It is a calibration of the anomaly-score axis, not a new
+  labelled-precision guarantee — still ranking under uncertainty, never a fraud
+  verdict. See `FINDINGS.md` "Decoupling the sparse-timing sentinel from the ML feature
+  matrix".
 
 ---
 
@@ -187,7 +206,8 @@ lacked) still did not recover this bot.
 |---|---|---|---|---|
 | Before (timing / monotony only) | 0.113 | 0.005 | 0.757 | Microsecond timestamps present and dense-timing rules active, yet the diverse outbound bot is missed. The documented method limit. |
 | + `asymmetric_degree` | 1.000 | 0.041 | 0.785 | An undirected actor graph flags a high-volume endpoint whose degree exceeds an adaptive floor **and** exceeds its reverse-role degree by ~10× **and** is monotone in service — covering both a broadcasting source and a passive fan-in hub, without asserting direction. Recovers recall, but overall precision stays low because other rules over-flag the background. |
-| **+ actor-band entity gating (current)** | **1.000** | **0.978** | **0.033** | Apply the existing **actor cardinality-ratio band** to the columns `entity_monotony` baselines over, so the degenerate `Proto` / `State` categoricals (below the band) are excluded from per-entity baselining. The over-flagging that capped precision goes away; `asymmetric_degree` is untouched and still carries the recall. |
+| + actor-band entity gating | 1.000 | 0.978 | 0.033 | Apply the existing **actor cardinality-ratio band** to the columns `entity_monotony` baselines over, so the degenerate `Proto` / `State` categoricals (below the band) are excluded from per-entity baselining. The over-flagging that capped precision goes away; `asymmetric_degree` is untouched and still carries the recall. |
+| **+ ML-tail sentinel decouple (current)** | **1.000** | **0.971** | **0.033** | The same feature-matrix fix that lifts CICIDS costs a little on the microsecond-clocked CTU mix: excluding the sentinel from the EIF axes trims precision 0.978 → 0.971, recall held at 1.000. Dropping the `dt` features entirely was **rejected** — it cost CTU **-4.8 pts** precision. |
 
 *Source: `FINDINGS.md` "asymmetric endpoint degree" section and "The precision fix".
 Reproduce with `uv run --extra eif python -m evaluation.ctu13_bot_benchmark`
@@ -227,6 +247,12 @@ problem.
   99th-percentile floor hold for asymmetry factors ≈ 10–100 on this one split plus a
   synthetic broadcaster; the rule over-fires below ≈ 10 and vanishes at ≥ 200. They are
   not scale-free constants.
+- **A small precision tradeoff from the CICIDS ML-tail fix.** Decoupling the
+  sparse-timing sentinel from the EIF matrix (a CICIDS precision win, 0.846 → 0.879)
+  trims CTU-13 sc1 precision **0.978 → 0.971**, recall flat at 1.000. Net across the
+  two primary captures: **+3.3 pts CICIDS, -0.7 pts CTU**; the "drop `dt` entirely"
+  alternative was rejected for costing CTU **-4.8 pts**. See `FINDINGS.md` "Decoupling
+  the sparse-timing sentinel from the ML feature matrix".
 
 ---
 
