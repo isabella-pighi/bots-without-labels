@@ -265,7 +265,7 @@ scope**. Trailer: `Co-Authored-By:` as your environment's commit rules specify.
 - **Refresh every doc the change touches in the same task** (routing table above).
   BENCHMARKS and FINDINGS must never disagree; the "protected gates" line that recites
   all current numbers (CICIDS 0.998/0.846/0.037, CTU-13 sc1 1.000/0.978/0.033, sc3
-  0.985/0.929/0.034, UNSW 0.122/0.198/0.020) appears in several places — update all.
+  0.985/0.929/0.034, UNSW 1.000/0.519/0.062) appears in several places — update all.
 - **Run the drift checker after any benchmark-number or commit-stamp change.** These
   numbers are echoed across ~10 skills for self-containedness, so a re-run that updates
   the registry can leave a stale copy behind. The checker treats the docs of record as

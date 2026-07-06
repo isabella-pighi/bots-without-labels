@@ -97,8 +97,8 @@ commands in Provenance.
 | **CICIDS2017 / Ares** (tracked, fan-in C2) | 0.998 / 0.846 / 0.037 | 0.032 | `uv run --extra eif python -m evaluation.cicids_bot_benchmark --zip data/GeneratedLabelledFlows.zip` | `tests/test_real_benchmark.py` → recall ≥ 0.95, `planted_precision` ≥ 0.35 **and** > base_rate, flag_rate ≤ 0.12 |
 | **CTU-13 sc1 / Neris** (tracked, fan-out) | 1.000 / 0.978 / 0.033 | 0.032 | `uv run --extra eif python -m evaluation.ctu13_bot_benchmark` | `tests/test_ctu13_benchmark.py` → `conftest.assert_ctu13_rare_attack_recall` (below) |
 | **CTU-13 sc3 / Rbot** (tracked / generality probe) | 0.985 / 0.929 / 0.034 | 0.0323 | `uv run --extra eif python -m evaluation.ctu13_bot_benchmark --scenario sc3` | `tests/test_ctu13_sc3_benchmark.py` → same `assert_ctu13_rare_attack_recall`; **plus** a no-data label guard `test_scenario_label_does_not_mislabel_binetflow_override` |
-| **UNSW-NB15 shard 1/4** (secondary, broad IDS) | 0.122 / 0.198 / 0.020 | 0.032 | `uv run --extra eif python -m evaluation.run_benchmarks --only unsw` | *No pinned bound* — secondary breadth check, skip-if-absent only |
-| **Bournemouth web logs** (provisional, negative) | 0.474 / 0.020 / 0.681 | 0.029 | `uv run --extra eif python -m evaluation.bournemouth_benchmark` | `tests/test_bournemouth_benchmark.py` → shape + valid-range only (no quality floor); parse/mapping guard always runs |
+| **UNSW-NB15 shard 1/4** (secondary, broad IDS) | 1.000 / 0.519 / 0.062 | 0.032 | `uv run --extra eif python -m evaluation.run_benchmarks --only unsw` | *No pinned bound* — secondary breadth check, skip-if-absent only |
+| **Bournemouth web logs** (provisional, negative) | 0.873 / 0.028 / 0.918 | 0.029 | `uv run --extra eif python -m evaluation.bournemouth_benchmark` | `tests/test_bournemouth_benchmark.py` → shape + valid-range only (no quality floor); parse/mapping guard always runs |
 
 ### The CTU-13 shared guard (`tests/conftest.py::assert_ctu13_rare_attack_recall`)
 

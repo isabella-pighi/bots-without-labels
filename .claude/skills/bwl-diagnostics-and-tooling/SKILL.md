@@ -149,8 +149,8 @@ Tier discipline (enforced in the script's registry and in
 
 Recorded numbers as of this writing (source: `evaluation/BENCHMARKS.md`,
 recall/precision/flag): CICIDS 0.998/0.846/0.037; CTU-13 sc1 1.000/0.978/0.033;
-CTU-13 sc3 0.985/0.929/0.034; UNSW 0.122/0.198/0.020; Bournemouth
-0.474/0.020/0.681 (provisional, below base rate — an honest negative). Quote
+CTU-13 sc3 0.985/0.929/0.034; UNSW 1.000/0.519/0.062; Bournemouth
+0.873/0.028/0.918 (provisional, below base rate — an honest negative). Quote
 caveats along with numbers; the caveat strings in the registry are part of the
 result. Do not run the full suite casually — it is slow; use `--only` for the
 benchmarks your change can plausibly touch.
@@ -172,7 +172,7 @@ When a rule "mysteriously" fires or stays dormant, read this dict first.
 | `local_burst` | int | Events in the 10-second window needed for `local_burst` (constant 5). |
 | `timestamp_grid` | float or None | Inferred clock quantisation period in seconds (e.g. 60.0 for minute-quantised CICIDS). None = no coarse grid detected. |
 | `dense_timing_gated` | bool | True when `timestamp_grid >= 10` (the burst window): same-instant/burst rules are suppressed per collision for ON-grid pile-ups (binning artefacts), while off-grid pile-ups still fire. The single most common answer to "why don't timing rules fire on this flow log". |
-| `entity_columns` | list[str] | Columns `entity_monotony` baselines per-entity behaviour over, chosen by the actor cardinality-ratio band (0.02–0.5) — the fix that excluded degenerate `Proto`/`State`. Empty = rule dormant. |
+| `entity_columns` | list[str] | Columns `entity_monotony` baselines per-entity behaviour over, chosen by the scale-invariant actor tests (recurrence + repeat-mass + value shape; `Proto`/`State` excluded by shape). Empty = rule dormant. |
 | `entity_diversity_cut` | float | Adaptive low-tail diversity cut (10th percentile of qualified entities, ceiling 0.20). 0.0 = no entity qualifies; monotony cannot fire. |
 | `entity_graph_active` | bool | True when ≥ 2 entity columns exist so hub degrees can be computed; then monotony escalates only on hubs. False with entity columns present = fallback: monotony fires on low diversity alone. |
 | `min_hub_degree` | int or None | 3 when the entity graph is active (spokes a star needs), else None. |
@@ -320,7 +320,8 @@ Interpretation checklist when a trace surprises you:
 - [ ] `dense_timing_gated` True on a log you expected timing fires from?
       That is the coarse-clock gate, not a bug (see `bwl-architecture-contract`).
 - [ ] Graph rules dormant? Check `entity_columns`/`actor_columns` emptiness and
-      the cardinality-ratio band before suspecting the rules themselves.
+      the scale-invariant actor tests (recurrence/repeat-mass/shape) before
+      suspecting the rules themselves.
 - [ ] Many tier-3 flags? Read their deviations; consider the ML threshold
       method printed (`kneedle_descending`, possibly `+rate_capped` when the 2%
       ML-only flag-rate cap engaged).

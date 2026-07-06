@@ -171,11 +171,11 @@ recall) — see the module docstring `evaluation/rule_diagnostic.py:24-27`.
 
 - **`entity_monotony` on degenerate columns.** On CTU-13, the low-cardinality NetFlow columns
   `Proto` and `State` (cardinality ratio ~0.0002–0.002) were being baselined as *entities*, so
-  `entity_monotony` flagged the honest NetFlow background. Fixed (`56f305d`) by requiring an
-  entity column to sit inside the **actor cardinality-ratio band `[0.02, 0.5]`**
-  (`ACTOR_MIN_RATIO`/`ACTOR_MAX_RATIO`, `features.py:64,71`; band applied in
-  `_entity_columns`, `features.py:502-509`). Result: CTU-13 sc1 precision → **0.978**
-  (`evaluation/BENCHMARKS.md:189`). If `entity_monotony` is your top FP source, dump
+  `entity_monotony` flagged the honest NetFlow background. Fixed (`543129a`, orig `56f305d`) by
+  excluding such columns from entity baselining — now by the scale-invariant **value-shape** test
+  (`_is_vocabulary`: small distinct AND enum-shaped ⇒ vocabulary), which replaced the earlier
+  cardinality-ratio band. `Proto`/`State` are short enums (structured-fraction ≈ 0) → excluded.
+  Result: CTU-13 sc1 precision **0.978**. If `entity_monotony` is your top FP source, dump
   `thresholds["entity_columns"]` and check whether a degenerate column snuck in.
 - **Timing rules on a coarse clock.** When timestamps are quantised coarsely (minute
   resolution), sub-second timing rules can misread benign co-occurrence as automation. The
@@ -203,22 +203,25 @@ before "fixing".
 | `degree_floor` | `None` | actor graph inactive, so no degree floor computed |
 | `min_hub_degree` | `None` | entity graph inactive (`MIN_HUB_DEGREE = 3` when active) |
 
-**Why a column fails entity/actor selection — the cardinality-ratio band `[0.02, 0.5]`.** A
-column must have distinct values that *scale with the data* (it identifies *who*), not a
-bounded vocabulary and not a per-row identifier. Verified selection gate (`_entity_columns`,
-`features.py:502-511`): distinct `>= ENTITY_MIN_DISTINCT (10)`, distinct
-`< ENTITY_UNIQUE_RATIO_MAX (0.95) * n_rows`, ratio inside `[ACTOR_MIN_RATIO 0.02,
-ACTOR_MAX_RATIO 0.5]`, and median value-count `>= ENTITY_MEDIAN_RECURRENCE_MIN (2)`. Actor
-endpoints add `ACTOR_MIN_DISTINCT (50)` and a recurring-values floor (`features.py:57-81`).
+**Why a column fails entity/actor selection — the scale-invariant actor tests.** A
+column must be a recurring actor identity (it identifies *who*), not a bounded vocabulary,
+edge id, or content column. Verified selection gate (`_entity_columns` / `_actor_endpoint_columns`,
+`features.py`): distinct `>= ENTITY_MIN_DISTINCT (10)` (actor path: `> ACTOR_MIN_DISTINCT 50`),
+median value-count `>= ENTITY_MEDIAN_RECURRENCE_MIN (2)` (entity path), `>= ACTOR_MIN_RECURRING`
+values recur `>= ACTOR_MIN_EVENTS`, repeat-mass `>= REPEAT_MASS_MIN (0.30)`, NOT a bounded enum
+vocabulary (small distinct AND structured-fraction `< STRUCTURED_TOKEN_MIN (0.5)`), and NOT a URL /
+url-derived content column. All tests are **scale-invariant** — there is no `distinct / n_rows`
+ratio (the removed cardinality band was scale-dependent; see `bwl-architecture-contract` §5).
 
 **Two recorded dormancy causes — one a correct verdict, one a role bug:**
 
-- **Bournemouth web logs — dormant by data (correct).** `session_id` is a real recurring
-  entity but its cardinality ratio falls **below the actor band**, so it reads as a bounded
-  categorical and the actor rules never engage (`evaluation/FINDINGS.md:406-410`). Forcing it
-  active caught **0 of 11** bot sessions and flagged monotone *humans* instead — so the band is
-  *not* the lever here; this is a documented **method limit** (`FINDINGS.md:424-440`). Do not
-  force it. If your log is web/HTTP, go to `bwl-webbot-campaign`, not a threshold tweak.
+- **Bournemouth web logs — a method limit, now shown directly.** Under the scale-invariant
+  selection `session_id` IS admitted as a per-entity actor, and it **over-flags** (~92% of rows):
+  a monotone human session looks as self-similar as a bot session, so `entity_monotony` fires on
+  humans too (`evaluation/FINDINGS.md`, Bournemouth section). This is the documented **method
+  limit** — the netflow signals do not separate human-mimicking web bots from humans; no
+  selection change recovers it. If your log is web/HTTP, go to `bwl-webbot-campaign`, not a
+  threshold tweak. (A raw request-`path` content column is also over-admitted — a tracked residual.)
 - **CTU-13 `entity_columns` empty — a role/recurrence issue.** The address columns did not
   populate `entity_columns` because of how their roles/recurrence resolved (`SrcAddr` typed as
   text; `DstAddr` failing the median-recurrence floor), which is why the *actor* graph — chosen
@@ -316,8 +319,9 @@ match wins:
 - **Identifier read as categorical?** The identifier check requires *both* a high ratio and
   token-like values (`_token_like >= 0.90`, `ingest.py:551-553`); miss either and the
   categorical branch claims it (any column with `<= 50` distinct values). Downstream: it can
-  leak into `entity_columns`/`actor_columns` if it also lands in the `[0.02, 0.5]` band — the
-  exact `Proto`/`State` failure mode of §2/§3.
+  leak into `entity_columns`/`actor_columns` if it also passes the scale-invariant actor tests
+  (recurrence + repeat-mass + shape) — the `Proto`/`State` failure mode of §2/§3, now guarded by
+  the value-shape vocabulary test.
 - **Categorical read as text?** It exceeded both `CATEGORICAL_ABS_MAX (50)` distinct and
   `CATEGORICAL_RATIO_MAX (0.20)` ratio. Text columns are eligible for concentration rules at
   any cardinality (`rules.py:181`), so this changes which rules apply.
@@ -383,8 +387,8 @@ accuracy.
 | CICIDS2017 / Ares | 0.998 | 0.846 | 0.037 | minute clock → dense-timing gated off |
 | CTU-13 sc1 / Neris | 1.000 | 0.978 | 0.033 | microsecond clock; actor graph carries it |
 | CTU-13 sc3 / Rbot | 0.985 | 0.929 | 0.034 | second-family generality probe |
-| UNSW-NB15 (secondary breadth) | 0.122 | 0.198 | 0.020 | broad IDS, not a botnet capture |
-| Bournemouth web logs | 0.474 | 0.020 | 0.681 | **provisional, licence-pending**; documented method limit |
+| UNSW-NB15 (secondary breadth) | 1.000 | 0.519 | 0.062 | broad IDS, not a botnet capture |
+| Bournemouth web logs | 0.873 | 0.028 | 0.918 | **provisional, licence-pending**; documented method limit |
 
 ---
 
@@ -397,7 +401,7 @@ All commands and constants below were run/read against that commit. Re-verify vo
 | --- | --- |
 | Decision cutoffs `HEURISTIC_CUTOFF 0.70`, `MAX_ML_FLAG_RATE 0.02` | `grep -n "HEURISTIC_CUTOFF\|MAX_ML_FLAG_RATE" bots_without_labels/pipeline.py` |
 | Thresholds dict keys (dormancy signals) | run §0 recipe 1 on any log and read the keys |
-| Actor/entity band `[0.02, 0.5]` and entity gate constants | `grep -n "ACTOR_MIN_RATIO\|ACTOR_MAX_RATIO\|ENTITY_MIN_DISTINCT\|ENTITY_MEDIAN_RECURRENCE_MIN" bots_without_labels/features.py` |
+| Scale-invariant actor/entity gate constants | `grep -n "REPEAT_MASS_MIN\|VOCAB_MAX_DISTINCT\|STRUCTURED_TOKEN_MIN\|ENTITY_MIN_DISTINCT\|ENTITY_MEDIAN_RECURRENCE_MIN" bots_without_labels/features.py` |
 | Role-chain thresholds `PARSE_RATE 0.95`, `URL_RATE 0.70`, `CATEGORICAL_ABS_MAX 50`, `CATEGORICAL_RATIO_MAX 0.20` | `grep -n "PARSE_RATE\|URL_RATE\|CATEGORICAL_ABS_MAX\|CATEGORICAL_RATIO_MAX" bots_without_labels/ingest.py` |
 | Role classification order | `sed -n '481,507p' bots_without_labels/ingest.py` |
 | Archetype names and detectable subset | `uv run python -c "from bots_without_labels.synthetic import ARCHETYPES, DETECTABLE_ARCHETYPES; print(ARCHETYPES, DETECTABLE_ARCHETYPES)"` |

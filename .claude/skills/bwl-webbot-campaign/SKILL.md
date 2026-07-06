@@ -7,7 +7,7 @@ description: >
   tests/test_bournemouth_benchmark.py); questions like "why does the detector not transfer to web
   logs?", "can we catch human-mimicking web bots?", "what about mouse dynamics / interaction
   biometrics?", "should we force session_id as the entity?"; proposals to tune timing thresholds for
-  page-load bursts, widen the actor band for web sessions, or claim web-bot detection works. This is
+  page-load bursts, reintroduce a ratio gate to re-hide web sessions, or claim web-bot detection works. This is
   a decision-gated campaign, not a fix — it tells you which experiments are allowed and which are
   fenced-off wrong paths with recorded evidence.
 ---
@@ -36,7 +36,7 @@ exact commands, an EXPECTED observation, and an explicit **gate** telling you wh
 | If your task is… | Use instead |
 | --- | --- |
 | A NetFlow benchmark (CICIDS/Ares, CTU-13/Neris/Rbot, UNSW-NB15) drifting or failing | `bwl-validation-and-qa`, `bwl-debugging-playbook` |
-| Understanding *why* the actor band / entity selection works the way it does | `bwl-architecture-contract`, `bwl-detection-theory` |
+| Understanding *why* the scale-invariant actor/entity selection works the way it does | `bwl-architecture-contract`, `bwl-detection-theory` |
 | A general "detector over-flags / mis-scores" symptom not specific to web logs | `bwl-debugging-playbook` |
 | Reading the recorded history of *other* investigations and dead ends | `bwl-failure-archaeology` |
 | Deciding whether ANY new dataset is worth wiring in | `bwl-diagnostics-and-tooling`, `bwl-validation-and-qa`; `bwl-failure-archaeology` (its rejected-datasets table) |
@@ -57,28 +57,28 @@ Recorded in `evaluation/FINDINGS.md` (§ "Domain transfer: web-server logs") and
 | --- | --- | --- |
 | Rows scored | 58,279 | Apache access-log requests (phase1) |
 | Base rate | 0.029 | fraction of rows that are bot |
-| Recall | 0.474 | caught <half of bot requests |
-| **Precision** | **0.020** | **below base rate → worse than chance** |
-| Flag rate | 0.681 | flagged 68% of all rows (timing over-fire) |
+| Recall | 0.873 | most bot requests flagged — but so is almost everything |
+| **Precision** | **0.028** | **below base rate → worse than chance** |
+| Flag rate | 0.918 | flagged ~92% of all rows (session entity + timing over-fire) |
 | Positive set | **11 bot sessions** / 263 human | *qualitative only* — far too small for a robust score |
-| Measured/verified | mono / rina (HCOM #38700) | see BENCHMARKS.md row for caveats |
+| Provenance | see BENCHMARKS.md row for caveats | provisional / licence-pending |
 
 **Two domain-transfer effects (both diagnosed, neither a detector regression):**
 
-1. **The actor rules went dormant.** `session_id` is a real recurring entity, but its cardinality
-   ratio is ~0.005 — *below* the actor band `[ACTOR_MIN_RATIO, ACTOR_MAX_RATIO] = [0.02, 0.5]`
-   (`bots_without_labels/features.py:64,71`). So the log has no in-band actor column, and both
-   `entity_monotony` (per-session baseline) and `asymmetric_degree` (actor graph) — the signals that
-   carry the NetFlow wins — never engage. `user_agent` is near-constant (~4 spoofed browser UAs), so
+1. **The session entity over-flags.** Under the scale-invariant actor selection `session_id` IS
+   admitted as a per-entity actor (the old cardinality-ratio band that used to exclude it is gone),
+   and `entity_monotony` then fires on human sessions too — a monotone human session is as
+   self-similar as a bot session — so the detector flags ~92% of rows at precision below the base
+   rate. This is the method limit shown *directly*: per-entity monotony does not separate
+   human-mimicking web bots from humans. `user_agent` is near-constant (~4 spoofed browser UAs), so
    it is no help either.
-2. **Timing over-fired on page-load bursts.** Left with only timing + the ML path, the sub-second
-   timing rules misread the burst of near-simultaneous requests from a *single web page-load* as
-   automated cadence, flagging 68% of rows.
+2. **Timing over-fired on page-load bursts.** The sub-second timing rules also misread the burst of
+   near-simultaneous requests from a *single web page-load* as automated cadence.
 
-**The Phase-1 diagnosis — a METHOD limit, not a calibration.** It is tempting to read "actor rules
-went dormant" as a *config* problem and force `session_id` active. **This was measured and it does
-not help:** with `session_id` baselined as the entity, `entity_monotony` caught **0 of 11** bot
-sessions and instead flagged *monotone human* sessions. The discriminating features do not separate
+**A METHOD limit, not a calibration.** It is tempting to read the over-flagging as a *config*
+problem — tune the selection so `session_id` behaves. **It does not help:** with `session_id`
+baselined as the entity, `entity_monotony` catches **0 of 11** bot sessions and instead flags
+*monotone human* sessions. The discriminating features do not separate
 the classes here — bot and human diversity, timing CoV, request entropy, and volume **all overlap**.
 No threshold or entity-selection change closes this. Closing it needs **web-specific signals the
 current rules do not model** — interaction biometrics (mouse dynamics), page-sequence / navigation
@@ -123,7 +123,7 @@ uv run --extra eif python -m evaluation.bournemouth_benchmark
 
 **EXPECTED** (rare-attack mix, default `--bot 1800`, seed = repo `DEFAULT_SEED`): a `format_report`
 block for "Bournemouth Web Bot Detection (web-log domain-transfer)" with recall ≈ **0.47**,
-precision ≈ **0.02**, flag rate ≈ **0.68**, base rate ≈ **0.029**, n_rows > 10,000, and the note
+precision ≈ **0.03**, flag rate ≈ **0.92**, base rate ≈ **0.029**, n_rows > 10,000, and the note
 line "session entity + actor graph DORMANT … timing+ML only". The parse/mapping guard test runs
 without the zip:
 
@@ -140,7 +140,7 @@ recall/precision floor (this is a negative result, so there is no floor to defen
 | Observation | Branch |
 | --- | --- |
 | Numbers within ±0.03 of expected | ✔ baseline good, proceed to Phase 2 |
-| Numbers drifted materially | **STOP.** The engine or loader changed. Do not "fix" the web benchmark — re-baseline the NetFlow suite first via `bwl-validation-and-qa`; a shift here usually means a shared-path change (loader, timing rule, actor band). Diagnose with `bwl-debugging-playbook`. |
+| Numbers drifted materially | **STOP.** The engine or loader changed. Do not "fix" the web benchmark — re-baseline the NetFlow suite first via `bwl-validation-and-qa`; a shift here usually means a shared-path change (loader, timing rule, actor selection). Diagnose with `bwl-debugging-playbook`. |
 | `import isotree` / eif error | You omitted `--extra eif`. The ML path needs it; without it the run is not comparable. |
 | Zip absent | `main` prints a skip and exits 0 by design. Fetch per the printed URL (`https://m4d.iti.gr/web-bot-detection-dataset/`); it stays gitignored. |
 
@@ -231,9 +231,10 @@ it unchanged.
 - **Why third:** best *doctrine fit* — extends the unsupervised skeleton rather than forking it — but
   only works if (a)/(b) actually yield a separating feature. It is a *delivery mechanism*, not a
   signal; it inherits whichever of (a)/(b) you prove.
-- **Obligation:** the new family must be a genuine engine change routed as such (Phase 5), and must
-  not require an in-band actor entity that this data lacks — i.e. the feature must live at the session
-  level directly, not depend on the dormant actor band.
+- **Obligation:** the new family must be a genuine engine change routed as such (Phase 5). The
+  session entity *is* now admitted, but per-entity monotony over it does not separate bots from
+  humans — so the new signal must add discriminating information at the session level (interaction
+  biometrics, navigation sequence), not lean on the existing monotony/timing signals.
 
 ### (d) A separate supervised web pipeline
 Train on the provided train/test annotations; keep it entirely apart from the unsupervised engine.
@@ -305,10 +306,10 @@ without new evidence is a process error.
 
 | Tempting move | Why it is wrong | Evidence |
 | --- | --- | --- |
-| **Re-force `session_id` as the actor entity** ("the band just excludes it, override the band") | Measured: `entity_monotony` on forced `session_id` caught **0 of 11** bots and lit up *monotone humans* — trades a clean "dormant-by-data" state for active false positives with zero recall | FINDINGS § Phase-1 diagnosis |
-| **Widen the actor band `[0.02, 0.5]` to admit low-ratio web sessions** | The band was *created* to fix NetFlow precision (the `Proto`/`State` degenerate-column over-flag). Widening it re-opens that blind spot and breaks the CTU-13 precision story | `bots_without_labels/features.py:64,71`; entity-band fix commit `56f305d`; see `ctu13` precision history in `bwl-failure-archaeology` |
-| **Tune the sub-second timing thresholds to suppress page-load bursts** | The 68% flag rate is a *method limit*, not calibration — the timing rules assume flow cadence, not HTTP page-loads; suppressing bursts by threshold does not add the missing behavioural signal and risks the NetFlow timing wins | FINDINGS: "No detector thresholds were tuned for this"; "a method limit, not calibration" |
-| **Claim web-bot detection "works" / quote a precision-recall from the mix** | 11 bot sessions is qualitative; the recorded precision (0.020) is *below* base rate. Any capability claim needs the Phase 4 bar on the full labelled set, and Phase 0 licence clearance | BENCHMARKS.md row 5 caveats; FINDINGS "qualitative domain-transfer evidence, not a robust estimate" |
+| **Lean on `session_id` per-entity monotony as the web signal** | `session_id` is already admitted as a per-entity actor, and `entity_monotony` over it catches **0 of 11** bots while lighting up *monotone humans* (~92% flag rate) — the monotony signal does not separate the classes. Adding "more monotony" cannot fix a signal that is uninformative here | FINDINGS § Bournemouth method limit |
+| **Reintroduce a `distinct / n_rows` gate to suppress web sessions** | The cardinality-ratio band was *removed* because it is scale-dependent (it silently disabled the actor signals on busy NetFlow logs). Do not bring back a ratio gate to re-hide `session_id`; the over-flagging is a method limit to *fix with a real signal*, not to mask | `bwl-architecture-contract` §5; features.py scale-invariant tests |
+| **Tune the sub-second timing thresholds to suppress page-load bursts** | The high flag rate is a *method limit*, not calibration — the timing rules assume flow cadence, not HTTP page-loads; suppressing bursts by threshold does not add the missing behavioural signal and risks the NetFlow timing wins | FINDINGS: "No detector thresholds were tuned for this"; "a method limit, not calibration" |
+| **Claim web-bot detection "works" / quote a precision-recall from the mix** | 11 bot sessions is qualitative; the recorded precision (0.028) is *below* base rate. Any capability claim needs the Phase 4 bar on the full labelled set, and Phase 0 licence clearance | BENCHMARKS.md row 5 caveats; FINDINGS "qualitative domain-transfer evidence, not a robust estimate" |
 | **Eyeball separation on a plot and call it signal** | Success in this campaign is *measurable gates only* (Phase 4). A convincing-looking scatter on 11 points is not evidence | `bwl-research-methodology` evidence bar |
 
 ---
@@ -320,9 +321,9 @@ provisional / local-internal, licence-pending (Phase 0).*
 
 | Volatile fact | Stated value | One-line re-verify |
 | --- | --- | --- |
-| Bournemouth benchmark numbers | recall 0.474 / precision 0.020 / flag 0.681, base 0.029 | `grep -n "Bournemouth" evaluation/BENCHMARKS.md` |
+| Bournemouth benchmark numbers | recall 0.873 / precision 0.028 / flag 0.918, base 0.029 | `grep -n "Bournemouth" evaluation/BENCHMARKS.md` |
 | Phase-1 "0 of 11" method-limit diagnosis | forced `session_id` → 0/11 bots caught | `grep -n "0 of 11" evaluation/FINDINGS.md` |
-| Actor band bounds | `[0.02, 0.5]` | `grep -n "ACTOR_M.._RATIO =" bots_without_labels/features.py` |
+| Scale-invariant actor tests | `REPEAT_MASS_MIN 0.3 / VOCAB_MAX_DISTINCT 200 / STRUCTURED_TOKEN_MIN 0.5` | `grep -n "REPEAT_MASS_MIN\|VOCAB_MAX_DISTINCT\|STRUCTURED_TOKEN_MIN" bots_without_labels/features.py` |
 | Run command / eif extra | `uv run --extra eif python -m evaluation.bournemouth_benchmark` | `sed -n '/^Run:/,/"""/p' evaluation/bournemouth_benchmark.py` |
 | Zip member map (200 mouse files phase1; annotations format) | see Phase 2 table | `unzip -l data/web_bot_detection_dataset.zip \| grep -c mouse_movements.json` |
 | mouse_movements.json shape | dict with `session_id`, `total_behaviour` (`[m(x,y)]…`) | inspect one file per the Phase 2 snippet |

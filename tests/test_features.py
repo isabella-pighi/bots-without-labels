@@ -6,8 +6,75 @@ from pathlib import Path
 
 import numpy as np
 
-from bots_without_labels.features import build_features
+from bots_without_labels.features import (
+    _actor_endpoint_columns,
+    _entity_columns,
+    build_features,
+)
 from bots_without_labels.ingest import load
+
+
+def _fixed_population_flow_log(path: Path, *, n_rows: int, n_hosts: int = 60) -> Path:
+    """A flow log with a FIXED IP-shaped host population at a chosen row count.
+
+    The distinct host count stays constant while ``n_rows`` grows, so the old
+    cardinality-ratio band (distinct / n_rows) collapses out of range even though
+    the population is a perfectly good recurring actor set.
+    """
+
+    rng = np.random.default_rng(0)
+    hosts = [f"10.0.{i // 256}.{i % 256}" for i in range(n_hosts)]
+    src = rng.integers(0, n_hosts, n_rows)
+    dst = rng.integers(0, n_hosts, n_rows)
+    lines = ["src,dst,proto,payload"]
+    protos = ["tcp", "udp", "icmp", "rtp"]
+    for i in range(n_rows):
+        lines.append(f"{hosts[src[i]]},{hosts[dst[i]]},{protos[i % 4]},{i % 97}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_actor_detection_is_scale_invariant(tmp_path: Path) -> None:
+    """A fixed host population is detected at every log size.
+
+    This is the regression guard for the cardinality-ratio bug: with the old
+    ``distinct / n_rows`` band, ``src``/``dst`` fell out of range past ~2,000
+    rows and both the per-entity baseline and the actor graph went silently
+    dormant. The scale-invariant recurrence/mass/shape tests must keep the
+    address columns -- and exclude the ``proto`` vocabulary -- at all sizes.
+    """
+
+    for n_rows in (1_000, 20_000, 100_000):
+        log = load(
+            _fixed_population_flow_log(tmp_path / f"n{n_rows}.csv", n_rows=n_rows)
+        )
+        cats = [c.name for c in log.schema.columns if c.role == "categorical"]
+        entity = _entity_columns(log.frame, log.schema, cats)
+        actor = _actor_endpoint_columns(log.frame, log.schema)
+        assert set(actor) == {"src", "dst"}, f"n={n_rows}: actor={actor}"
+        assert "proto" not in entity and "proto" not in actor, f"n={n_rows}"
+        # src/dst are baseline-able entities too (dense, recurring, IP-shaped).
+        assert {"src", "dst"} <= set(entity), f"n={n_rows}: entity={entity}"
+
+
+def test_edge_id_column_excluded_by_repeat_mass(tmp_path: Path) -> None:
+    """A per-row identifier (near-unique IP-shaped flow id) is not an actor.
+
+    It clears the distinct floor and is structurally shaped, but almost no value
+    recurs, so its repeat-mass is ~0 and the actor graph must skip it -- treating
+    it as an endpoint would corrupt every degree.
+    """
+
+    n = 4_000
+    lines = ["flow_id,src,dst"]
+    for i in range(n):
+        # flow_id unique per row; src/dst a small recurring host set
+        lines.append(f"10.9.{i // 256}.{i % 256},10.0.0.{i % 30},10.0.1.{i % 30}")
+    path = tmp_path / "edge.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log = load(path)
+    actor = _actor_endpoint_columns(log.frame, log.schema)
+    assert "flow_id" not in actor
 
 
 def _write_click_log(path: Path) -> Path:
@@ -124,26 +191,39 @@ def test_entity_degree_distinguishes_hub_from_point_to_point(
     src_degree = fs.context.entity_degree_by_col["src"]
 
     # The hub destination is reached by four distinct sources (a star).
-    hub_rows = np.where(dst == "c2hub")[0]
+    hub_rows = np.where(dst == "10.0.0.9")[0]
     assert float(dst_degree[hub_rows][0]) == 4.0
     # The backup->store channel is point-to-point: degree 1 on both ends.
-    backup_rows = np.where(src == "backup")[0]
+    backup_rows = np.where(src == "10.0.1.1")[0]
     assert float(src_degree[backup_rows][0]) == 1.0
-    store_rows = np.where(dst == "store")[0]
+    store_rows = np.where(dst == "10.0.1.2")[0]
     assert float(dst_degree[store_rows][0]) == 1.0
 
 
 def _degenerate_vocab_log(path: Path) -> Path:
     """A flow-like CSV with actor IP columns plus a degenerate ``proto`` column.
 
-    ``src``/``dst`` are recurring high-cardinality actors (cardinality ratio
-    inside the actor band); ``proto`` is a bounded categorical vocabulary -- 12
-    values that recur heavily, so it clears the distinct floor and the
-    median-recurrence test, but its cardinality ratio (~12/700) sits *below*
-    ``ACTOR_MIN_RATIO``. It stands in for CTU-13 ``Proto``/``State``.
+    ``src``/``dst`` are recurring IP-shaped actors; ``proto`` is a bounded
+    categorical vocabulary -- 12 short enum values that recur heavily, so it
+    clears the distinct floor and the median-recurrence test, but its values are
+    not identifier-shaped. It stands in for CTU-13 ``Proto``/``State`` and must
+    be excluded by the scale-invariant *shape* test, not by any ratio.
     """
 
-    protos = [f"proto{i}" for i in range(12)]
+    protos = [
+        "tcp",
+        "udp",
+        "icmp",
+        "rtp",
+        "arp",
+        "igmp",
+        "ipx",
+        "gre",
+        "esp",
+        "ah",
+        "ospf",
+        "sctp",
+    ]
     header = "src,dst,proto,payload"
     rows = [header]
     for s in range(50):
@@ -151,7 +231,7 @@ def _degenerate_vocab_log(path: Path) -> Path:
             d = (s + r) % 50
             proto = protos[(s + r) % 12]
             payload = (s * 13 + r * 7) % 97
-            rows.append(f"s{s},d{d},{proto},{payload}")
+            rows.append(f"10.1.0.{s},10.1.1.{d},{proto},{payload}")
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     return path
 
@@ -159,11 +239,11 @@ def _degenerate_vocab_log(path: Path) -> Path:
 def test_entity_columns_exclude_degenerate_low_cardinality_categorical(
     tmp_path: Path,
 ) -> None:
-    # The cardinality-ratio band keeps a bounded vocabulary (``proto``) out of the
-    # per-entity baseline while retaining the actor-like IP columns -- the fix that
-    # stops entity_monotony over-flagging on CTU-13 Proto/State. ``proto`` is
-    # excluded *only* by the band: it clears the distinct floor (12 >= 10) and the
-    # median-recurrence test, so a vacuous pass is ruled out.
+    # The scale-invariant shape test keeps a bounded enum vocabulary (``proto``)
+    # out of the per-entity baseline while retaining the actor-like IP columns --
+    # the fix that stops entity_monotony over-flagging on CTU-13 Proto/State.
+    # ``proto`` is excluded *only* by shape: it clears the distinct floor
+    # (12 >= 10) and the median-recurrence test, so a vacuous pass is ruled out.
     log = load(_degenerate_vocab_log(tmp_path / "flows.csv"))
     fs = build_features(log.frame, log.schema)
 

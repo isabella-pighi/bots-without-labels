@@ -207,9 +207,11 @@ measurements, but still single-capture results, **not** production guarantees an
   benchmark needs the **raw headerless shards** `data/UNSW-NB15_1.csv` … `_4.csv` (49 columns; the canonical
   header is applied in code — see `RAW_COLUMNS` in `evaluation/unsw_benchmark.py`), which carry `srcip` /
   `dstip` / `Stime` / `Label`. Only `_1.csv` is present locally by default.
-- **What it proves / recorded numbers.** **Recall 0.122, precision 0.198, flag 0.020.** A deliberately
-  **low** result: a detector tuned for beaconing automation is *not* expected to catch a grab-bag of
-  one-shot exploits. It exists as a no-regression guard (it must not spike the flag rate), not a win.
+- **What it proves / recorded numbers.** **Recall 1.000, precision 0.519, flag 0.062.** The
+  scale-invariant actor selection admits `srcip`/`dstip` here, so the entity/monotony signal fires
+  broadly on this IDS shard's attack sources — a generality data point, **not** a bot-detection result
+  (UNSW is a mixed-family IDS set, not a beaconing botnet). Read it as "the actor signal is
+  scale-robust and fires here," never as a tracked bot number.
 
 ### Bournemouth web-bot logs — domain-transfer negative (provisional, licence-pending)
 
@@ -224,12 +226,14 @@ measurements, but still single-capture results, **not** production guarantees an
   `web_logs/humans/` (bot tier advanced/moderate). ≈ **58,279 rows**, base rate ≈ 0.029. The archive also
   ships **mouse-movement JSON** per session (`phase1/data/mouse_movements/…`) — the raw material for the
   future interaction-biometric capability.
-- **What it proves / recorded numbers.** **Recall 0.474, precision 0.020, flag 0.681 — a NEGATIVE result,
-  and precision (0.020) sits *below* the base rate (0.029)** (worse than guessing; see §6). Two mechanisms:
-  (1) sessions are few and large, so `session_id` cardinality ratio ≈ 0.005 falls **below the actor band** →
-  actor rules go dormant; (2) the advanced/moderate bots spoof real browser UAs (only ~4 distinct), so
-  diversity signals blur. **Interpretation:** flow/timing automation signals **do not transfer** to evasive,
-  human-mimicking web bots. This is *why* TODO item 12 exists. Read the row as a domain-transfer probe, not
+- **What it proves / recorded numbers.** **Recall 0.873, precision 0.028, flag 0.918 — a NEGATIVE result,
+  and precision (0.028) sits *below* the base rate (0.029)** (worse than guessing; see §6). Two mechanisms:
+  (1) the scale-invariant selection now **admits** `session_id` as a per-entity actor, and its monotony
+  fires on human sessions too (a monotone human session is as self-similar as a bot session), over-flagging
+  ~92% of rows; (2) the advanced/moderate bots spoof real browser UAs (only ~4 distinct), so diversity
+  signals blur. **Interpretation:** flow/timing automation signals **do not transfer** to evasive,
+  human-mimicking web bots — the session entity over-flags rather than separating them. This is *why* TODO
+  item 12 exists. Read the row as a domain-transfer probe, not
   a tuning failure. (`bwl-webbot-campaign`.)
 
 ### Candidate datasets that were assessed and SKIPPED

@@ -200,11 +200,12 @@ ceiling" in full before touching `entity_monotony`, the hub gate, or timing gati
 - **Fix:** the `asymmetric_degree` rule (strong, weight 0.70) on an actor-endpoint graph.
   It **first shipped deliberately direction-agnostic** — a schema-generic detector cannot
   reliably tell a source column from a destination column by name, and name-parsing is
-  the coupling arc 1 forbids. Endpoints are chosen **by shape**: a recurring,
-  high-cardinality token column whose **cardinality ratio** sits in the band
-  `ACTOR_MIN_RATIO = 0.02` to `ACTOR_MAX_RATIO = 0.5` (`_actor_endpoint_columns` in
-  `features.py`). The band separates a genuine actor from a *bounded categorical* below
-  it (protocol, TCP state, region) and a *per-row edge id* above it (flow id, 5-tuple).
+  the coupling arc 1 forbids. Endpoints are chosen **by shape**: a recurring token column,
+  separated from a *bounded categorical* (protocol, TCP state, region) and a *per-row edge
+  id* (flow id, 5-tuple) by scale-invariant recurrence/mass/value-shape tests
+  (`_actor_endpoint_columns` in `features.py`). *(At the time this arc shipped the separator
+  was a `cardinality_ratio` band `[0.02, 0.5]`; it was later found scale-dependent and
+  replaced — see the scale-invariance arc / `bwl-architecture-contract` §5.)*
   The rule fired on a high-volume endpoint whose degree exceeds an adaptive floor
   (`DEGREE_FLOOR_PERCENTILE`, 99th pct of the hub subset), **and** exceeds its
   reverse-role degree by ≥ `DEGREE_ASYMMETRY = 10`, **and** is monotone in service.
@@ -226,8 +227,10 @@ ceiling" in full before touching `entity_monotony`, the hub gate, or timing gati
 - **Verified:** CTU-13 precision **0.041 → 0.978**, flag rate **0.785 → 0.033**, recall
   held **1.000**. CICIDS **unchanged** (there Source IP/Destination IP stay in-band, so
   `entity_monotony` keeps its recall-carrying role). The same band change made UNSW-NB15
-  more conservative: recall 0.561 → 0.122, precision 0.090 → 0.198, flag 0.201 → 0.020
-  (broad IDS, not a bot capture — lower recall is no bot regression).
+  more conservative at the time: recall 0.561 → 0.122, precision 0.090 → 0.198, flag
+  0.201 → 0.020 (broad IDS, not a bot capture). *(Superseded: the later scale-invariant
+  selection removed the band and re-admitted `srcip`/`dstip`, lifting UNSW to
+  1.000 / 0.519 / 0.062 — see the scale-invariance arc below.)*
 - **CITE THE VERIFIED NUMBER:** an earlier per-rule *counterfactual projection* (removing
   degenerate-column fires from the diagnostic) estimated **0.956**. That was a
   **projection**. The **actual verified precision on the re-run pipeline is 0.978** — cite
@@ -285,7 +288,7 @@ access logs (Bournemouth Web Bot Detection) — is an honest **negative**, and r
 matters as much as the wins.
 
 - **Symptom:** on 58,279 rows (base rate 0.029, real folder labels `bots/` vs `humans/`),
-  the detector scored **recall 0.474, precision 0.020** — *below* the base rate, worse than
+  the detector scored **recall 0.873, precision 0.028** — *below* the base rate, worse than
   chance, flagging 68% of rows.
 - **Root cause (two domain-transfer effects, neither a detector regression):**
   1. **Actor rules went dormant.** `session_id` is a real recurring entity, but its
@@ -381,10 +384,10 @@ Authored 2026-07-04 (last repo review 2026-07-06); repo at commit `8a85edd`. Thi
 | CICIDS current numbers (0.998 / 0.846 / 0.037) | `grep -n 'CICIDS2017 Friday' evaluation/BENCHMARKS.md` |
 | CTU-13 sc1 numbers (1.000 / 0.978 / 0.033) | `grep -n 'scenario 1 (Neris)' evaluation/BENCHMARKS.md` |
 | Rbot sc3 numbers (0.985 / 0.929 / 0.034) | `grep -n 'scenario 3 (Rbot)' evaluation/BENCHMARKS.md` |
-| Bournemouth numbers (0.474 / 0.020) provisional | `grep -n 'Bournemouth' evaluation/BENCHMARKS.md` |
+| Bournemouth numbers (0.873 / 0.028) provisional | `grep -n 'Bournemouth' evaluation/BENCHMARKS.md` |
 | Verified-not-projected CTU-13 precision is 0.978 | `grep -n '0.956\|0.978' evaluation/FINDINGS.md` |
 | Rbot asymmetric_degree fired 34,995 rows | `grep -n '34,995' evaluation/FINDINGS.md` |
-| Constants `MIN_HUB_DEGREE`/`ACTOR_MIN_RATIO`/`DEGREE_ASYMMETRY` | `grep -rn 'MIN_HUB_DEGREE\|ACTOR_MIN_RATIO\|ACTOR_MAX_RATIO\|DEGREE_ASYMMETRY' bots_without_labels/` |
+| Constants `MIN_HUB_DEGREE`/`REPEAT_MASS_MIN`/`DEGREE_ASYMMETRY` | `grep -rn 'MIN_HUB_DEGREE\|REPEAT_MASS_MIN\|STRUCTURED_TOKEN_MIN\|DEGREE_ASYMMETRY' bots_without_labels/` |
 | TODO follow-ups F/G/H still open | `grep -n '^### [FGH]\.' TODO.md` |
 | Rejected-dataset table intact | `grep -n 'Bits and Bots\|Zenodo\|IP-stripped' evaluation/BENCHMARKS.md` |
 | Tests that pin the wins still exist | `uv run pytest tests/test_real_benchmark.py tests/test_ctu13_benchmark.py --collect-only -q` |

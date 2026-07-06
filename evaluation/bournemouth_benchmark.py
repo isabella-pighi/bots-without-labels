@@ -27,17 +27,23 @@ Label / entity / timestamp mapping (confirmed before trusting numbers):
       ENTITY is the per-session id (8th field), which recurs across a session's
       requests and cross-checks the ``annotations`` files; ``user_agent`` is a
       second entity. TIMESTAMP is per-second.
-    * Consequence (as MEASURED on this data, reported not tuned): web sessions are
-      few and large (a few hundred sessions, each hundreds of requests), so the
-      ``session_id`` cardinality ratio is ~0.005 -- *below* the actor band
-      ``[ACTOR_MIN_RATIO, ACTOR_MAX_RATIO]`` = [0.02, 0.5] used by the per-entity
-      and actor-graph selectors. So BOTH ``entity_monotony`` (per-session baseline)
-      and ``asymmetric_degree`` stay dormant here, and ``user_agent`` is near-constant
-      (the advanced/moderate bots spoof real browser UAs -- only ~4 distinct UAs).
-      Detection therefore falls to the timing rules + the ML model. This is a real
-      domain-transfer limit: the band (calibrated for NetFlow IP entities at ratio
-      0.02-0.5) excludes web-session entities, and the timing rules over-fire on the
-      dense page-load bursts of web traffic. It is NOT tuned around.
+    * Consequence (as MEASURED on this data, reported not tuned): the actor
+      selectors are now scale-invariant (they key on recurrence + value shape, not
+      the old cardinality ratio), so the recurring ``session_id`` IS admitted as a
+      per-entity actor here -- which *directly* demonstrates the method limit
+      rather than hiding it. A session's per-entity monotony does NOT separate an
+      evasive web bot from a human: both a bot session and a monotone human session
+      look self-similar, so ``entity_monotony`` fires on human sessions too and the
+      detector over-flags (~92% of rows, precision 0.028 -- still *below* the ~0.029
+      base rate, i.e. worse than guessing). ``user_agent`` is near-constant (the
+      advanced/moderate bots spoof real browser UAs -- only ~4 distinct UAs), and
+      the timing rules over-fire on dense page-load bursts. This is a real
+      domain-transfer limit -- the NetFlow-shaped signals (repetition, monotony,
+      timing) do not transfer to human-mimicking web bots; closing it needs
+      web-specific signals (interaction biometrics), tracked in TODO item 12. It is
+      NOT tuned around. (A raw request-``path`` column is also still admitted as a
+      pseudo-actor -- content, not an identity; generic content-column detection
+      for non-URL-typed path fields is a known residual, TODO follow-up H/12.)
 
 Native balance is near-even (phase1: ~38.9k bot / ~57.5k human requests). For
 comparability with the ~3% rare-attack NetFlow mixes we keep all human requests as

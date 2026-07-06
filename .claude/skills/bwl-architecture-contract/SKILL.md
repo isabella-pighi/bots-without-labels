@@ -1,6 +1,6 @@
 ---
 name: bwl-architecture-contract
-description: Load when you need the WHY behind a design choice before changing it — why rules key on inferred roles not column names, why the two detectors are joined by OR, why only timing/graph evidence is "strong" and repetition is capped, why every threshold is batch-relative, why the actor graph is undirected with source by schema order, why timestamps are grid-gated, why everything is deterministic. Load before touching rule weights, the 0.70 cutoff, the cardinality band, the degree/asymmetry guardrails, or the evidence-tier logic; before proposing a new hardcoded branch (e.g. "special-case clicks/DNS/this dataset"); or when asked "is this safe to change / what invariant would this break / why is it built this way". Names: rules.py, anomaly.py, pipeline.py, features.py, DEGREE_ASYMMETRY, SUPPORTING_CAP, entity_monotony, asymmetric_degree.
+description: Load when you need the WHY behind a design choice before changing it — why rules key on inferred roles not column names, why the two detectors are joined by OR, why only timing/graph evidence is "strong" and repetition is capped, why every threshold is batch-relative, why the actor graph is undirected with source by schema order, why timestamps are grid-gated, why everything is deterministic. Load before touching rule weights, the 0.70 cutoff, the scale-invariant actor-selection tests (recurrence/repeat-mass/value-shape), the degree/asymmetry guardrails, or the evidence-tier logic; before proposing a new hardcoded branch (e.g. "special-case clicks/DNS/this dataset"); or when asked "is this safe to change / what invariant would this break / why is it built this way". Names: rules.py, anomaly.py, pipeline.py, features.py, DEGREE_ASYMMETRY, SUPPORTING_CAP, entity_monotony, asymmetric_degree.
 ---
 
 # BWL Architecture Contract
@@ -150,28 +150,30 @@ the current batch:
   number look good is overfitting and forbidden — see §Known-weak-points for where this rule is *already*
   strained (the degree guardrails).
 
-### 5. The cardinality band `[0.02, 0.5]` gates who can be an "actor"
+### 5. Scale-invariant tests gate who can be an "actor" (recurrence + mass + shape)
 
 An *actor/entity column* is one whose values identify **who** is communicating (an IP address, a session
-id) so the row can be baselined against that actor's own history. A column qualifies only if its
-`cardinality_ratio` (distinct values ÷ rows) sits inside a band. Both the entity-baseline path
+id) so the row can be baselined against that actor's own history. Both the entity-baseline path
 (`features.py:_entity_columns`) and the relational actor graph (`features.py:_actor_endpoint_columns`)
-use the **same** band. Verify:
-`uv run python -c "import bots_without_labels.features as f; print(f.ACTOR_MIN_RATIO, f.ACTOR_MAX_RATIO)"`
-→ `0.02 0.5`.
+use the **same** scale-invariant tests. Verify:
+`uv run python -c "import bots_without_labels.features as f; print(f.REPEAT_MASS_MIN, f.VOCAB_MAX_DISTINCT, f.STRUCTURED_TOKEN_MIN)"`
+→ `0.3 200 0.5`.
 
-| Bound | Value | Excludes | WHY |
-|---|---|---|---|
-| lower `ACTOR_MIN_RATIO` | 0.02 | bounded vocabularies (TCP `State`, `Proto`, region, status code) | their distinct count does **not** scale with the data — they are *context*, not actors |
-| upper `ACTOR_MAX_RATIO` | 0.5 | per-row / edge identifiers (flow id, composite 5-tuple key) | mostly-unique values identify the *row*, not a recurring actor, and would corrupt degrees |
+| Test | Excludes | WHY |
+|---|---|---|
+| recurrence (`≥ ACTOR_MIN_RECURRING` values recur `≥ ACTOR_MIN_EVENTS`) | pure per-row edge ids (no value recurs) | an actor has a history to baseline; scale-invariant |
+| repeat-mass `≥ REPEAT_MASS_MIN` | ephemeral / edge columns (mass in near-unique values) | a recurring actor's mass sits in busy values, not singletons |
+| value shape (small distinct `≤ VOCAB_MAX_DISTINCT` **and** structured-fraction `< STRUCTURED_TOKEN_MIN` ⇒ **vocabulary, excluded**) | bounded enum vocabularies (TCP `State`, `Proto`, `Dir`) | a bounded vocab is *frequency-identical* to a small closed actor pool, so only *shape* separates them |
+| `_is_content_column` (role URL or url-derived) | URL paths / referers | content, not identity |
 
-- **The incident (recorded in `_entity_columns` docstring + `evaluation/FINDINGS.md`):** without the lower
-  bound, CTU-13's degenerate low-cardinality `Proto`/`State` columns (ratio ~0.0002–0.002) were baselined
-  as entities, so `entity_monotony` over-flagged the NetFlow background. Real IP columns (ratio
-  ~0.04–0.06) sit inside the band and are kept. The band is what fixed the CTU-13 over-flagging (see
-  `bwl-failure-archaeology`, "CTU-13 precision root cause").
-- **Invariant:** any new "who is the actor" logic reuses this single band; do not add a second, divergent
-  cardinality gate.
+- **The scale bug this fixed:** the earlier design used a `cardinality_ratio` band `[0.02, 0.5]`
+  (`ACTOR_MIN_RATIO`/`ACTOR_MAX_RATIO`, now **removed**). `distinct / n_rows` shrinks for a *fixed* actor
+  population as the log grows, so past ~2,000 rows a busy internal-subnet log fell out of the band and
+  **both** actor signals went silently dormant. The replacement tests are scale-invariant. The
+  `Proto`/`State` vocabulary exclusion (the CTU-13 precision fix) is preserved by the *shape* test. Tracked
+  botnet benchmarks are bit-identical; see `bwl-failure-archaeology`.
+- **Invariant:** any new "who is the actor" logic reuses these scale-invariant tests; never re-introduce a
+  `distinct / n_rows` gate (it is scale-dependent).
 
 ### 6. Undirected actor graph, source by schema order, source-fan-out only
 
@@ -287,7 +289,7 @@ A one-screen checklist. If your change would flip any of these, stop and route t
 4. **Weights, cap, and 0.70 cutoff move together** — never one in isolation (§3).
 5. **Thresholds stay batch-relative** — 99th-pct distinct-group sizes with floors, Kneedle knee, 2% ML
    cap, hub-subset degree floor. No constant tuned to one capture (§4).
-6. **One cardinality band `[0.02, 0.5]`** gates both entity and actor columns (§5).
+6. **One set of scale-invariant tests** (recurrence + repeat-mass + value shape) gates both entity and actor columns (§5) — never a `distinct / n_rows` ratio.
 7. **Actor graph undirected; direction from schema order, not names; fan-out ≠ fan-in ownership split**
    between `asymmetric_degree` and `entity_monotony` (§6).
 8. **Dense timing stays clock-gated** — per-collision, phase-aware, mode-based grid (§7).
@@ -322,7 +324,7 @@ count were verified by import/collection at authoring time.
 |---|---|
 | Rule weights + supporting cap | `uv run python -c "import bots_without_labels.rules as r; print(r.SUPPORTING_CAP, r.W_SAME_INSTANT_BURST, r.W_LOCAL_BURST, r.W_REGULAR_TIMING, r.W_ENTITY_MONOTONY, r.W_ASYMMETRIC_DEGREE)"` |
 | Heuristic cutoff + ML rate cap | `uv run python -c "import bots_without_labels.pipeline as p; print(p.HEURISTIC_CUTOFF, p.MAX_ML_FLAG_RATE)"` |
-| Cardinality band | `uv run python -c "import bots_without_labels.features as f; print(f.ACTOR_MIN_RATIO, f.ACTOR_MAX_RATIO)"` |
+| Scale-invariant actor tests | `uv run python -c "import bots_without_labels.features as f; print(f.REPEAT_MASS_MIN, f.VOCAB_MAX_DISTINCT, f.STRUCTURED_TOKEN_MIN)"` |
 | Degree guardrails | `uv run python -c "import bots_without_labels.rules as r; print(r.DEGREE_ASYMMETRY, r.DEGREE_FLOOR_PERCENTILE, r.MIN_HUB_DEGREE)"` |
 | EIF determinism knobs | `uv run python -c "import bots_without_labels.anomaly as a; print(a.EIF_TREES, a.EIF_EXTENSION_DIMS, a.EIF_SAMPLE_SIZE)"` then `grep -n "nthreads\|random_seed\|standardize_data" bots_without_labels/anomaly.py` |
 | Decision line text | `grep -n "is_bot = heuristic" bots_without_labels/pipeline.py` |

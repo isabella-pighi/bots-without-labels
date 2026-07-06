@@ -3,7 +3,7 @@ name: bwl-config-and-flags
 description: >
   Load when you need the value, meaning, or tier of any tuning knob in Bots Without Labels — a rule
   weight, threshold, floor, percentile, cardinality band, EIF parameter, CLI flag, or benchmark
-  argument. Triggers: "what does W_ENTITY_MONOTONY / SUPPORTING_CAP / HEURISTIC_CUTOFF / ACTOR_MIN_RATIO
+  argument. Triggers: "what does W_ENTITY_MONOTONY / SUPPORTING_CAP / HEURISTIC_CUTOFF / STRUCTURED_TOKEN_MIN
   / DEGREE_ASYMMETRY do", "how do I change a threshold safely", "what's the default n_bots / seed /
   max_ml_flag_rate", "which constants are safe to touch", "add a new config knob", "where is 0.70 set",
   "why is precision moving after I changed a weight". Read this before editing any constant, kwarg, or
@@ -106,20 +106,24 @@ except the two hub rules, which are deliberately allowed to.
 | `BURST_WINDOW_SECONDS` | `10` | Sliding window for the burst-concentration feature and burst-run segmentation; also names the feature (`burst10s__conc`). | load-bearing calibrated |
 | `SPARSE_TIMING_SENTINEL` | `999.0` | Inter-arrival std/cv value for groups too small to score, so sparse groups never look "regular". | structural guard |
 | `ENTITY_MIN_DISTINCT` | `10` | A categorical needs ≥ this many distinct values to be an *entity* column (baselined actor). | structural guard |
-| `ENTITY_UNIQUE_RATIO_MAX` | `0.95` | An entity column with distinct/rows ≥ this is a per-row identifier and is excluded. | structural guard |
 | `ENTITY_MEDIAN_RECURRENCE_MIN` | `2` | The median entity value must recur at least this often, else "actors" are one-offs. | structural guard |
 | `ENTITY_DIVERSITY_BINS` | `8` | Quantile bins applied to numeric columns before per-entity/per-actor entropy. | structural guard |
 | `ACTOR_MIN_DISTINCT` | `50` | An actor *endpoint* (relational graph node) needs more than this many distinct values (above the loader's bounded-set cutoff). | structural guard |
-| `ACTOR_MIN_RATIO` | `0.02` | **Lower** cardinality-ratio band for an actor endpoint. Below it = a bounded vocabulary (protocol/TCP-state) = context, not an actor. | load-bearing calibrated |
-| `ACTOR_MAX_RATIO` | `0.5` | **Upper** cardinality-ratio band. Above it = a near-unique edge/flow id, not a recurring endpoint. | load-bearing calibrated |
 | `ACTOR_MIN_RECURRING` | `2` | Needs ≥ this many values that recur (≥ `ACTOR_MIN_EVENTS`) so real hubs exist. | structural guard |
 | `ACTOR_MIN_EVENTS` | `12` | Events a value needs to count as a recurring actor / qualify for the asymmetric rule (mirrors `ENTITY_MIN_EVENTS`). | structural guard |
+| `REPEAT_MASS_MIN` | `0.30` | Min fraction of rows in values that recur ≥ `ACTOR_MIN_EVENTS`; excludes ephemeral/edge columns. Scale-invariant. | guardrail (limited evidence) |
+| `VOCAB_MAX_DISTINCT` | `200` | A column at/below this distinct count *and* enum-shaped (see `STRUCTURED_TOKEN_MIN`) is a bounded vocabulary, excluded. | guardrail (limited evidence) |
+| `STRUCTURED_TOKEN_MIN` | `0.5` | Min fraction of distinct values that look like identifier tokens (digit+separator, or ≥ 7 chars); below it a *small* column is a vocabulary. | guardrail (limited evidence) |
 | `GRID_ALIGNMENT_TOLERANCE_SECONDS` | `1e-3` | How close to a grid multiple a timestamp must fall to count as *on-grid* (absorbs float round-trip). | structural guard |
 | `_MISSING`, `_FIELD_SEPARATOR` | `"\x00NA"`, `"\x1f"` | Internal sentinels that cannot occur in log text (missing cell; multi-column key join). | cosmetic |
 
-> The `ACTOR_MIN_RATIO`/`ACTOR_MAX_RATIO` band is the fix for the CTU-13 over-flagging root cause:
-> degenerate low-cardinality `Proto`/`State` columns (ratio ~0.0002–0.002) were being baselined as
-> entities. Real address columns (ratio ~0.04–0.06) sit inside the band. See `bwl-failure-archaeology`.
+> **Scale-invariant actor selection.** `REPEAT_MASS_MIN` + `VOCAB_MAX_DISTINCT` +
+> `STRUCTURED_TOKEN_MIN` (with `ACTOR_MIN_RECURRING`/`ACTOR_MIN_EVENTS`) *replaced* the
+> old cardinality-ratio band (`ACTOR_MIN_RATIO`/`ACTOR_MAX_RATIO`, removed): that band
+> gated on `distinct / n_rows`, which shrinks for a fixed actor population as the log
+> grows, so both actor signals went silently dormant past ~2,000 rows. The new tests
+> are scale-invariant. A bounded `Proto`/`State` vocabulary is now excluded by *shape*,
+> not ratio. See `bwl-failure-archaeology` and `bwl-architecture-contract` §5.
 
 ### `bots_without_labels/ingest.py` — loader & schema inference
 
@@ -232,8 +236,8 @@ Recorded numbers (from `evaluation/BENCHMARKS.md`, this repo — **not** product
 | CICIDS2017 / Ares (minute-quantised ⇒ dense-timing gated off) | 0.998 | 0.846 | 0.037 |
 | CTU-13 sc1 / Neris (µs clock) | 1.000 | 0.978 | 0.033 |
 | CTU-13 sc3 / Rbot (generality probe) | 0.985 | 0.929 | 0.034 |
-| UNSW-NB15 shard 1/4 (secondary; not a bot capture) | 0.122 | 0.198 | 0.020 |
-| Bournemouth web logs (**provisional, licence-pending; negative** — precision below base rate) | 0.474 | 0.020 | 0.681 |
+| UNSW-NB15 shard 1/4 (secondary; not a bot capture) | 1.000 | 0.519 | 0.062 |
+| Bournemouth web logs (**provisional, licence-pending; negative** — precision below base rate) | 0.873 | 0.028 | 0.918 |
 
 ---
 
@@ -243,8 +247,9 @@ Follow in order. Do not skip the pairing or the diff step.
 
 1. **Classify the tier** (Table 1 legend). Cosmetic → light touch. Anything else → the full loop below.
 2. **Find the paired constant.** Weights ↔ `HEURISTIC_CUTOFF`; a supporting weight ↔ `SUPPORTING_CAP`;
-   `DEGREE_FLOOR_PERCENTILE` ↔ `DEGREE_ASYMMETRY`; `ACTOR_MIN_RATIO` ↔ `ACTOR_MAX_RATIO`. **Change the
-   pair together** — an isolated weight change silently redefines what counts as a flag.
+   `DEGREE_FLOOR_PERCENTILE` ↔ `DEGREE_ASYMMETRY`; `VOCAB_MAX_DISTINCT` ↔ `STRUCTURED_TOKEN_MIN`
+   (the vocabulary discriminator). **Change the pair together** — an isolated change
+   silently redefines what counts as a flag or an actor.
 3. **If you are adding a knob:** add the module constant *and* a default-preserving kwarg so existing
    callers are byte-identical, and document its tier in this table. Never introduce a magic literal in
    the middle of a function.
@@ -275,7 +280,7 @@ stamp (2026-07-04) predates this authoring session — trust the re-verify comma
 | Volatile fact | One-line re-verify command |
 | --- | --- |
 | `rules.py` weights / floors / bands | `uv run python -c "import bots_without_labels.rules as r; print(r.W_ENTITY_MONOTONY, r.W_ASYMMETRIC_DEGREE, r.SUPPORTING_CAP, r.DEGREE_ASYMMETRY, r.DEGREE_FLOOR_PERCENTILE)"` |
-| `features.py` actor/entity constants | `uv run python -c "import bots_without_labels.features as f; print(f.BURST_WINDOW_SECONDS, f.ACTOR_MIN_RATIO, f.ACTOR_MAX_RATIO, f.ACTOR_MIN_EVENTS)"` |
+| `features.py` actor/entity constants | `uv run python -c "import bots_without_labels.features as f; print(f.BURST_WINDOW_SECONDS, f.REPEAT_MASS_MIN, f.VOCAB_MAX_DISTINCT, f.STRUCTURED_TOKEN_MIN, f.ACTOR_MIN_EVENTS)"` |
 | `ingest.py` inference constants | `uv run python -c "import bots_without_labels.ingest as i; print(i.PARSE_RATE, i.URL_RATE, i.CATEGORICAL_ABS_MAX, i.CATEGORICAL_RATIO_MAX, i.IDENTIFIER_RATIO_MIN, i.SAMPLE_SIZE)"` |
 | `pipeline.py` decision constants | `uv run python -c "import bots_without_labels.pipeline as p; print(p.HEURISTIC_CUTOFF, p.MAX_ML_FLAG_RATE, p.MAX_SELECTED_EVENTS)"` |
 | `anomaly.py` / `threshold.py` | `uv run python -c "import bots_without_labels.anomaly as a, bots_without_labels.threshold as t; print(a.EIF_TREES, a.EIF_EXTENSION_DIMS, a.EIF_SAMPLE_SIZE, t.SMALL_INPUT_SIZE, t.TIED_SCORE_MIN_DISTINCT)"` |

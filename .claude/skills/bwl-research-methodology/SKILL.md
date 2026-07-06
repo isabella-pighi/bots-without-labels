@@ -59,15 +59,17 @@ A result is accepted here only when **all** of the following hold. Treat it as a
 The CTU-13 precision fix is the canonical "one mechanism explains all" result. The **single mechanism**:
 `entity_monotony` was doing per-entity baselining over the *degenerate* categorical columns `Proto` /
 `State` (a handful of repeated tokens across the whole batch), reading them as if they were high-
-cardinality actor identities. The fix: gate per-entity baselining to columns whose cardinality ratio
-sits in an **actor band** (`ACTOR_MIN_RATIO` = 0.02 to `ACTOR_MAX_RATIO` = 0.5), which excludes the
-degenerate columns. That *one* change had to explain three separate movements simultaneously:
+cardinality actor identities. The fix (as it stood at commit `543129a`): gate per-entity baselining to
+columns whose cardinality ratio sat in an **actor band** `[0.02, 0.5]`, which excludes the degenerate
+columns. *(That ratio band was later found scale-dependent and replaced with scale-invariant
+recurrence/shape tests; the methodology point is unchanged.)* That *one* change had to explain three
+separate movements simultaneously:
 
 | Observation | Number | Why the same mechanism predicts it |
 |---|---|---|
 | CTU-13 sc1/Neris **over-flagging fixed** | precision **0.041 → 0.978**, flag **0.785 → 0.033**, recall held **1.000** | Removing degenerate-column fires stops the over-flag; `asymmetric_degree` still carries recall (2000/2000, zero false fires). |
 | CICIDS/Ares **non-regression** | **unchanged 0.998 / 0.846 / 0.037** | There `Source IP` / `Dest IP` are genuine high-cardinality actor columns — *in-band*, so the gate removes nothing. |
-| UNSW-NB15 (secondary) **recall drop** | recall **0.561 → 0.122**, precision **0.090 → 0.198**, flag **0.201 → 0.020** | The earlier recall was *partly the same degenerate-column artefact*; removing it lowers recall — "different and honest, not strictly better". |
+| UNSW-NB15 (secondary) **recall drop, then restored** | band fix: recall **0.561 → 0.122**, precision **0.090 → 0.198**; later scale-invariant fix re-admits IPs: **→ 1.000 / 0.519** | The band fix lowered recall (partly the same degenerate-column artefact); the later scale-invariant selection removed the band and re-admitted the IP actors. |
 
 The UNSW drop is the tell: a mechanism you trust must also predict where you *lose*. Recording the loss
 (rather than quietly keeping the higher number) is what made the attribution credible. If your proposed
@@ -178,7 +180,7 @@ as evidence or merged as final.
 
 A result that fails is data. It is written down so the project does not re-run the same dead end.
 
-- **Negative transfer, recorded:** the Bournemouth web-log benchmark is an honest **negative** — recall **0.474**, precision **0.020** (*below* the base rate, i.e. worse than chance), flag rate **0.681**. It flagged monotone *human* sessions and caught 0 of 11 bot sessions. It ships as a tracked, skip-if-absent benchmark with the numbers marked provisional/licence-pending. It is kept precisely because "the netflow-tuned method does not transfer to web logs out of the box" is a finding.
+- **Negative transfer, recorded:** the Bournemouth web-log benchmark is an honest **negative** — recall **0.873**, precision **0.028** (*below* the base rate, i.e. worse than chance), flag rate **0.918**. It flagged monotone *human* sessions and caught 0 of 11 bot sessions. It ships as a tracked, skip-if-absent benchmark with the numbers marked provisional/licence-pending. It is kept precisely because "the netflow-tuned method does not transfer to web logs out of the box" is a finding.
 - **Rejected candidates, tabled:** dataset candidates that were assessed and dropped are recorded with the reason (e.g. files that turn out to be bot-vs-bot with no accessible real-human labels are marked SKIP), so the assessment is not repeated.
 
 Retirement checklist: [ ] number recorded in BENCHMARKS.md/FINDINGS.md · [ ] reason stated · [ ] wording honest (no spin on a bad number) · [ ] roadmap note if it opens a future capability.
@@ -253,8 +255,8 @@ docs of record or git history at that commit; re-verify before quoting in a late
 
 | Volatile fact | Stated value | One-line re-verify |
 |---|---|---|
-| Tracked benchmark numbers | CICIDS 0.998/0.846/0.037; CTU sc1 1.000/0.978/0.033; CTU sc3 0.985/0.929/0.034; UNSW 0.122/0.198/0.020; Bournemouth 0.474/0.020/0.681 | `grep -nE "0.998\|0.978\|0.929\|0.122\|0.474" evaluation/BENCHMARKS.md evaluation/FINDINGS.md` |
-| Actor-band mechanism + constants | `ACTOR_MIN_RATIO`=0.02, `ACTOR_MAX_RATIO`=0.5 | `grep -nE "ACTOR_MIN_RATIO\|ACTOR_MAX_RATIO" bots_without_labels/features.py` |
+| Tracked benchmark numbers | CICIDS 0.998/0.846/0.037; CTU sc1 1.000/0.978/0.033; CTU sc3 0.985/0.929/0.034; UNSW 1.000/0.519/0.062; Bournemouth 0.873/0.028/0.918 | `grep -nE "0.998\|0.978\|0.929\|1.000\|0.873" evaluation/BENCHMARKS.md evaluation/FINDINGS.md` |
+| Scale-invariant actor tests | `REPEAT_MASS_MIN`=0.3, `VOCAB_MAX_DISTINCT`=200, `STRUCTURED_TOKEN_MIN`=0.5 | `grep -nE "REPEAT_MASS_MIN\|VOCAB_MAX_DISTINCT\|STRUCTURED_TOKEN_MIN" bots_without_labels/features.py` |
 | Fan-in prediction → materialised 0.056 → fixed 0.929 | predicted in `2a3f362`, fixed in `13e9436` | `git log --oneline 2a3f362 771c9cb 13e9436` and `grep -n "0.056" evaluation/FINDINGS.md` |
 | 0.956 projection vs 0.978 verified | projection superseded by measurement | `grep -n "0.956\|0.978" evaluation/FINDINGS.md` |
 | WIP-checkpoint contract | `b6023d4` marked WIP/UNREVIEWED, NOT for main | `git show -s --format=%B b6023d4` |

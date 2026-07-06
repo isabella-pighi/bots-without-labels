@@ -17,35 +17,40 @@ import pytest
 def _network_log(path: Path, *, n_fill: int = 40) -> Path:
     """A flow-like CSV with two entity columns (``src``/``dst``).
 
-    Contains a *hub*: one destination ``c2hub`` fanned to by four distinct
+    Contains a *hub*: one destination (``10.0.0.9``) fanned to by four distinct
     sources with a constant payload; a *point-to-point* monotone channel
-    (``backup`` -> ``store``); and diverse filler traffic that spreads the
+    (``10.0.1.1`` -> ``10.0.1.2``); and diverse filler traffic that spreads the
     per-entity diversity distribution so the adaptive cut is well defined. The
     numeric payloads of the filler/benign rows step across the whole global range
     so each entity occupies many quantile bins (genuinely diverse), rather than
-    clustering into one.
+    clustering into one. Actor tokens are IP-shaped so the scale-invariant shape
+    discriminator (:func:`bots_without_labels.features._is_vocabulary`) admits
+    them as actors rather than reading them as a bounded vocabulary.
     """
 
     n_pay = 12
     header = "src,dst," + ",".join(f"p{i}" for i in range(n_pay))
     rows = [header]
     zero = ",".join(["0"] * n_pay)
+    hub = "10.0.0.9"
     for source in range(4):
+        src = f"10.0.2.{source}"
         for _ in range(8):
-            rows.append(f"s{source},c2hub,{zero}")
+            rows.append(f"{src},{hub},{zero}")
         for j in range(10):
             payload = ",".join(
                 str(j * n_fill * 13 + source + k * 101) for k in range(n_pay)
             )
-            rows.append(f"s{source},benign{j % 5},{payload}")
+            rows.append(f"{src},10.0.3.{j % 5},{payload}")
     for _ in range(20):
-        rows.append(f"backup,store,{zero}")
-    for host in range(n_fill):
+        rows.append(f"10.0.1.1,10.0.1.2,{zero}")
+    for host in range(n_fill):  # n_fill < 256 keeps each octet valid
+        src, dst = f"10.0.4.{host}", f"10.0.5.{host}"
         for j in range(12):
             payload = ",".join(
                 str(j * n_fill * 13 + host + k * 101) for k in range(n_pay)
             )
-            rows.append(f"f{host},fd{host},{payload}")
+            rows.append(f"{src},{dst},{payload}")
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     return path
 

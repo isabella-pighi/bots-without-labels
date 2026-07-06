@@ -250,7 +250,11 @@ actors and over-flagging the diverse NetFlow background (see the honest ceiling
 below). The fix reuses machinery already in the codebase: the **actor
 cardinality-ratio band** (`ACTOR_MIN_RATIO` = 0.02 to `ACTOR_MAX_RATIO` = 0.5) that
 `_actor_endpoint_columns` uses to pick graph endpoints by *shape* is now also
-applied to the columns `entity_monotony` baselines over (`_entity_columns`). `Proto`
+applied to the columns `entity_monotony` baselines over (`_entity_columns`).
+*(The cardinality-ratio band was later found to be scale-dependent and was
+replaced with scale-invariant tests — see "Scale-invariant actor selection"
+below. The account here describes the mechanism as it stood at the precision
+fix.)* `Proto`
 and `State` are *bounded categoricals* — a handful of distinct values across the
 whole batch — so their cardinality ratio sits **below** the band, and they are
 excluded from per-entity baselining. A real actor column (`Source`/`Destination`
@@ -271,12 +275,58 @@ genuine actor columns.
 The same band change also moved the **secondary** UNSW-NB15 broad-IDS check
 (`evaluation/BENCHMARKS.md`): recall 0.561 → 0.122, precision 0.090 → 0.198, flag
 rate 0.201 → 0.020. Its earlier recall was partly the *same* degenerate-column
-over-flagging, so the stricter gating made that breadth check **more conservative
-and honest, not strictly better** — and since UNSW-NB15 is a broad IDS dataset, not
-a bot capture, the lower recall is no bot regression.
+over-flagging, so the stricter gating made that breadth check more conservative.
+*(This was superseded by the later scale-invariant selection, which re-admits
+`srcip`/`dstip` and lifts UNSW recall to 1.000 — see "Scale-invariant actor
+selection" above. UNSW is a broad IDS dataset, not a bot capture, so neither number
+is a bot result.)*
 
 *Verification: rina-approved (review #37205) against mono's measured benchmark table
 (#37143).*
+
+### Scale-invariant actor selection: the cardinality-ratio band was scale-dependent
+
+A review of the feature engineering found that the cardinality-ratio band
+(`distinct / n_rows` in `[0.02, 0.5]`) is **scale-dependent**: for a *fixed* actor
+population the ratio shrinks as the log grows, so past ~2,000 rows a busy log with a
+bounded host set falls out of the band and **both** the per-entity baseline and the
+actor graph go silently dormant. The tracked NetFlow captures only stayed in-band
+because their actor populations are *open* (distinct keeps growing with rows); a
+64k-row internal subnet with 40 hosts would have quietly lost detection.
+
+The band was replaced with three **scale-invariant** tests, all of which depend on
+how values recur and what they look like, never on `distinct / n_rows`:
+
+1. **Recurrence** — at least a couple of values recur `≥ ACTOR_MIN_EVENTS` (has
+   baseline-able history; also excludes pure edge-ids). Already present for the actor
+   graph; now the primary test for both paths.
+2. **Repeat-mass** (`REPEAT_MASS_MIN`) — the fraction of rows in values that recur;
+   excludes ephemeral / per-row columns (an ephemeral source port, a flow id) whose
+   mass sits in near-unique values. Replaces the ratio *upper* bound.
+3. **Value shape** (`STRUCTURED_TOKEN_MIN` + `VOCAB_MAX_DISTINCT`) — a bounded enum
+   vocabulary (`Proto`, `State`, `Dir`) is **frequency-identical** to a small closed
+   actor pool, so it is separated by *shape*: a small column of short non-identifier
+   values is a vocabulary; an address / token column (or a large-distinct one) is an
+   actor. This is what now keeps `Proto`/`State` out — the role the ratio floor served,
+   done scale-invariantly. Replaces the ratio *lower* bound.
+
+URL and URL-derived columns are also excluded outright (`_is_content_column`): a URL
+path or referer is *content*, not an actor.
+
+**Verified end-to-end — the tracked botnet numbers are bit-identical**: CICIDS
+0.998 / 0.846 / 0.037, CTU-13 sc1 1.000 / 0.978 / 0.033, sc3 0.985 / 0.929 / 0.034,
+because their actor populations were open (in-band) and their selected columns are
+unchanged. The **secondary** rows changed, because the fix now correctly admits actor
+columns the ratio band was excluding: **UNSW-NB15** re-admits `srcip`/`dstip` (recall
+0.122 → 1.000, precision 0.198 → 0.519 — the actor signal now fires on this broad-IDS
+shard, still not a bot result), and **Bournemouth** admits the web `session_id`
+(flag 0.681 → 0.918, still a negative below the base rate — the session-entity method
+limit now shown *directly* rather than hidden by the band; see the Bournemouth
+section). No thresholds were tuned; the new constants are limited-evidence guardrails
+chosen with margin from the CTU-13 / CICIDS / UNSW measurements. **Honest residual**:
+a closed pool of *short, unstructured* ids (bare integers, usernames) is
+shape-ambiguous vs a vocabulary and is not detected — and a raw request-`path`
+content column is still admitted as a pseudo-actor; both are tracked follow-ups.
 
 ### The honest ceiling (CTU-13)
 
@@ -388,8 +438,8 @@ actor-graph rule contributes none.
 - **Still two scenarios of one dataset.** sc1 + sc3 are both CTU-13; this is
   second-family evidence within that corpus, not a fully independent one.
 
-The protected gates are unchanged by this work: CICIDS 0.998 / 0.846 / 0.037, CTU-13
-sc1 1.000 / 0.978 / 0.033, and UNSW-NB15 0.122 / 0.198 / 0.020 all stand.
+The protected gates are unchanged by this work: CICIDS 0.998 / 0.846 / 0.037 and
+CTU-13 sc1 1.000 / 0.978 / 0.033 both stand.
 
 *Original split finding measured by mono (#37642); the source-fan-out narrowing and
 its numbers verified by rina (review #38226).*
@@ -399,45 +449,47 @@ its numbers verified by rina (review #38226).*
 Everything above is *network-flow* data. The first test on a **different domain** —
 raw Apache access logs (Bournemouth Web Bot Detection) — is an honest **negative**, and
 recording it matters as much as the wins. On 58,279 rows (base rate 0.029, real
-folder-provided `bots/` vs `humans/` labels) the detector scored recall 0.474 and
-precision **0.020** — *below* the base rate, i.e. worse than chance. Two domain-transfer
-effects explain it, neither a detector regression:
+folder-provided `bots/` vs `humans/` labels) the detector scored recall 0.873 and
+precision **0.028** — *below* the base rate, i.e. worse than chance. The scale-invariant
+actor selection (no cardinality-ratio band) now **admits** `session_id`, and that is
+what makes the method limit *visible*:
 
-- **The actor rules went dormant.** `session_id` is a real recurring entity, but its
-  cardinality ratio falls *below* the actor band, so it is read as a bounded categorical
-  rather than an actor endpoint. With no in-band actor column, both `entity_monotony`
-  and `asymmetric_degree` — the signals that carry the netflow benchmarks — never
-  engaged.
-- **Timing over-fired on page-load bursts.** Left with only timing + the ML path, the
-  sub-second timing rules misread the burst of near-simultaneous requests from a single
-  web page-load as automated cadence, flagging 68% of rows.
+- **The session entity over-flags.** With `session_id` baselined as a per-entity actor,
+  `entity_monotony` fires on human sessions too — a monotone human session is as
+  self-similar as a bot session — so the flag rate climbs to **~92%**. Under the old
+  cardinality-ratio band `session_id` fell out of range and stayed dormant (a quieter
+  68%-flag negative driven by timing alone); the scale-invariant selection shows the
+  limit directly. (A raw request-`path` content column is also admitted as a
+  pseudo-actor — content, not identity; a tracked residual.)
+- **Timing over-fires on page-load bursts.** The sub-second timing rules also misread the
+  burst of near-simultaneous requests from a single web page-load as automated cadence.
 
-So the netflow-tuned method does not transfer to web logs out of the box: its actor
-signals need an in-band actor entity (absent here) and its timing rules assume flow
-cadence, not page-load bursts. No detector thresholds were tuned for this. Two honest
-limits: the positive set is **tiny — only 11 bot sessions** (263 human), so this is
-*qualitative* domain-transfer evidence, not a robust precision/recall estimate; and the
-numbers are **provisional / local-internal** pending a licence decision (research use
-invited, copyright reserved). The netflow gates are unchanged. *Measured by mono,
-verified by rina (#38700); see `evaluation/BENCHMARKS.md` for the full row and caveats.*
+So the netflow-tuned method does not transfer to web logs: its per-entity monotony does
+not separate human-mimicking web bots from humans. No detector thresholds were tuned.
+Two honest limits: the positive set is **tiny — only 11 bot sessions** (263 human), so
+this is *qualitative* domain-transfer evidence, not a robust precision/recall estimate;
+and the numbers are **provisional / local-internal** pending a licence decision
+(research use invited, copyright reserved). The netflow gates are unchanged. *See
+`evaluation/BENCHMARKS.md` for the full row and caveats.*
 
-### Phase-1 diagnosis: a method limit, not an entity-selection bug
+### The method limit, confirmed directly
 
-It would be easy to read "the actor rules went dormant" as a *configuration* problem —
-fix the entity selection and the result improves. A Phase-1 diagnosis shows it is not.
-`session_id` is the only real actor column in this log, and **forcing it active anyway
-does not help**: with `session_id` baselined as the entity, `entity_monotony` caught
-**0 of 11** Bournemouth bot sessions and instead flagged *monotone human* sessions. The
-reason is that the discriminating features simply do not separate the two classes here —
-bot and human **diversity, timing coefficient-of-variation, request entropy, and volume
+Admitting `session_id` is not a *configuration* win — it is the method limit shown in
+the open. `session_id` is the only real actor column in this log, and baselining it does
+not recover detection: `entity_monotony` catches **0 of 11** Bournemouth bot sessions
+and instead flags *monotone human* sessions. (This is exactly what an earlier Phase-1
+experiment predicted when it *forced* the session entity active under the old band; the
+scale-invariant selection now makes it the default.) The reason is that the
+discriminating features simply do not separate the two classes here — bot and human
+**diversity, timing coefficient-of-variation, request entropy, and volume
 all overlap**. The human-mimicking web bots in this dataset are, on exactly the axes the
 detector measures, indistinguishable from people.
 
-So the **actor band is not the lever, and must not be forced** — doing so trades a clean
-"dormant by data" state for active false positives on monotone humans, with no recall to
-show for it. This is a **method limit**: the detector's repetition / timing /
-concentration / diversity signals, which work on mechanical automation and network
-botnets, **do not transfer to human-mimicking web bots**. Closing the gap is not
+So **entity selection is not the lever** — admitting the session entity produces active
+false positives on monotone humans, with no recall to show for it. This is a **method
+limit**: the detector's repetition / timing / concentration / diversity signals, which
+work on mechanical automation and network botnets, **do not transfer to human-mimicking
+web bots**. Closing the gap is not
 calibration; it needs **web-specific signals** — interaction biometrics such as mouse
 dynamics, which Bournemouth happens to carry — a separate future capability, tracked in
 `TODO.md` (P3, item 12), not a tweak to the existing rules.

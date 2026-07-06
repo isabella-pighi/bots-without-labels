@@ -29,6 +29,7 @@ features.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
@@ -36,7 +37,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import entropy as shannon_entropy
 
-from .ingest import Role, Schema
+from .ingest import ColumnSchema, Role, Schema
 
 BURST_WINDOW_SECONDS = 10
 SPARSE_TIMING_SENTINEL = 999.0
@@ -45,12 +46,11 @@ value keeps sparse groups from looking mechanically regular."""
 
 ENTITY_MIN_DISTINCT = 10
 """An actor-like column needs at least this many distinct values to baseline."""
-ENTITY_UNIQUE_RATIO_MAX = 0.95
-"""An entity column whose distinct count reaches this fraction of the rows is
-essentially a per-row identifier, so it is excluded from baselining."""
 ENTITY_MEDIAN_RECURRENCE_MIN = 2
 """The median entity value must recur at least this often; below it most
-"actors" are one-offs with no history to baseline."""
+"actors" are one-offs with no history to baseline. This is what makes the
+per-entity path target a *dense* actor population (contrast the actor-graph
+path, which only needs a few recurring values)."""
 ENTITY_DIVERSITY_BINS = 8
 """Quantile bins applied to numeric columns before per-entity entropy."""
 
@@ -61,24 +61,57 @@ values -- it never *identifies* an actor -- so requiring a distinct count above
 the loader's own bounded-set cutoff (``ingest.CATEGORICAL_ABS_MAX``) keeps such
 context columns out of the actor graph even when their cardinality ratio is not
 tiny on a small batch."""
-ACTOR_MIN_RATIO = 0.02
-"""Lower cardinality-ratio bound for an actor endpoint column. Above this, a
-column's distinct count scales with the data (it identifies *who* communicates);
-at or below it the column is a high-cardinality-but-bounded vocabulary -- a TCP
-state, a status code -- that is context, not an actor node. Keeps such context
-columns out of the relational actor graph even when they clear the distinct
-floor."""
-ACTOR_MAX_RATIO = 0.5
-"""Upper cardinality-ratio bound for an actor endpoint column. A column whose
-values are mostly unique (a flow id, a per-row key, a composite 5-tuple edge id)
-is an identifier of the *edge/row*, not a recurring actor; excluding it stops a
-near-unique edge id from being mistaken for an endpoint and corrupting degrees."""
 ACTOR_MIN_RECURRING = 2
 """An actor endpoint must have at least this many values that recur enough
-(``>= ACTOR_MIN_EVENTS`` events) to be baseline-able actors with a history."""
+(``>= ACTOR_MIN_EVENTS`` events) to be baseline-able actors with a history. This
+is scale-invariant: a fixed actor population always has these recurring values
+however large the log grows."""
 ACTOR_MIN_EVENTS = 12
 """Events a value needs to count as a recurring actor (endpoint detection) and to
 qualify for the asymmetric-degree rule. Mirrors ``rules.ENTITY_MIN_EVENTS``."""
+
+# --- Scale-invariant actor/vocabulary discriminators -------------------------
+# These replace the earlier cardinality-ratio band [ACTOR_MIN_RATIO,
+# ACTOR_MAX_RATIO]. The ratio (distinct / n_rows) shrinks as a log grows for a
+# FIXED actor population, so both the per-entity baseline and the actor graph
+# silently went dormant past ~2,000 rows on a busy log with a bounded host set
+# (the CICIDS/CTU-13 captures only stayed in-band because their actor
+# populations are *open* -- distinct keeps growing with rows). The tests below
+# are all scale-invariant: they depend on how values recur and what they look
+# like, never on distinct/n_rows. Constants are LIMITED-EVIDENCE GUARDRAILS
+# (like rules.DEGREE_ASYMMETRY), chosen with wide margin from the CTU-13 /
+# CICIDS / UNSW measurements, not scale-free general constants.
+REPEAT_MASS_MIN = 0.30
+"""Minimum fraction of rows whose value recurs ``>= ACTOR_MIN_EVENTS`` times.
+Separates a recurring-actor column from a per-row/ephemeral column (a flow id or
+an ephemeral source port), whose mass sits in near-unique values. Measured on
+CTU-13: real address columns 0.59-0.83; ephemeral ``Sport`` 0.09; a flow id
+~0.0. Replaces the ``ACTOR_MAX_RATIO`` upper guard, scale-invariantly."""
+VOCAB_MAX_DISTINCT = 200
+"""A column with at most this many distinct values *and* enum-shaped values (see
+:data:`STRUCTURED_TOKEN_MIN`) is treated as a bounded categorical vocabulary
+(protocol, TCP state, direction) and excluded. Above it, a column is too diverse
+to be a vocabulary regardless of shape. The pair (distinct + shape) replaces the
+scale-dependent ``ACTOR_MIN_RATIO`` lower bound: a bounded vocabulary is
+frequency-*identical* to a small closed actor pool, so shape -- not frequency --
+is the only reliable, scale-invariant separator."""
+STRUCTURED_TOKEN_MIN = 0.5
+"""Minimum fraction of a column's distinct values that look like an identifier
+token -- containing a digit and a separator (``. : _ - /``), or at least
+:data:`_STRUCTURED_MIN_LENGTH` characters. Addresses / MACs / UUIDs / long
+device ids clear it (measured 1.0 on CTU-13 IP columns); short enum
+vocabularies do not (``Proto``/``Dir``/``State`` <= 0.1). A *small* column
+below this fraction is a vocabulary; at or above it (or with many distinct
+values) it is an actor pool. Known residual: a closed pool of short,
+unstructured ids -- bare integers, usernames, mnemonic hosts -- is
+shape-ambiguous vs a vocabulary and is not detected here (see TODO follow-up H,
+integer-coded identifier inference)."""
+_STRUCTURED_MIN_LENGTH = 7
+"""A value at least this long counts as a structured token even without a
+digit+separator -- long opaque ids (hashes, UUIDs, account tokens)."""
+_STRUCTURED_TOKEN_RE = re.compile(r"(?=.*\d)(?=.*[.:_\-/])")
+"""Matches a value that contains both a digit and a separator (an address-like
+token). Used with the length fallback in :func:`_structured_fraction`."""
 
 GRID_ALIGNMENT_TOLERANCE_SECONDS = 1e-3
 """How close to a grid multiple a timestamp must fall to count as *on-grid*.
@@ -377,7 +410,7 @@ def build_features(
     # actor fans out. Scoring each entity by how repetitive its own events are
     # catches repetition-based bots that the globally-capped concentration rules
     # miss -- without firing on every popular value.
-    entity_cols = _entity_columns(frame, categoricals)
+    entity_cols = _entity_columns(frame, schema, categoricals)
     if entity_cols:
         diversity, volume, by_col = _entity_baseline(
             frame, schema, entity_cols, categoricals, n_bins=entity_diversity_bins
@@ -476,38 +509,101 @@ def _unique_char_ratio(value: str) -> float:
     return len(set(value)) / len(value)
 
 
-def _entity_columns(frame: pd.DataFrame, categoricals: list[str]) -> list[str]:
-    """Pick actor-like columns to baseline: categoricals whose values recur.
+def _is_content_column(col: ColumnSchema) -> bool:
+    """True for a URL or URL-derived column -- *content*, never an actor.
 
-    An entity column has many distinct values (so it identifies actors, not a
-    handful of categories) but each value recurs (so an actor has several events
-    to baseline), and is not essentially unique (that is an identifier).
-
-    It must also sit in the same cardinality-ratio band the relational actor graph
-    uses (:func:`_actor_endpoint_columns`): a *bounded categorical vocabulary*
-    (protocol, TCP state, region) sits below :data:`ACTOR_MIN_RATIO` -- its
-    distinct count does not scale with the data, so it is context, not an actor --
-    and a per-row/edge identifier sits above :data:`ACTOR_MAX_RATIO`. Without this
-    gate, degenerate low-cardinality columns (e.g. CTU-13 ``Proto``/``State``,
-    cardinality ratio ~0.0002-0.002) were baselined as entities, so the
-    ``entity_monotony`` rule over-flagged the NetFlow background; real actor
-    columns (IP addresses, ratio ~0.04-0.06) sit inside the band and are kept.
+    A URL path, query parameter, or referer is what is being requested, not who
+    is requesting it. Such columns can be high-cardinality, recurring, and
+    structurally token-shaped (they contain ``/`` and are long), so they slip
+    past the recurrence + shape actor tests; excluding them by role/derivation
+    keeps them out of the per-entity baseline and the actor graph. Measured on
+    the Bournemouth web logs: without this guard, ``path`` and ``referer__path``
+    were wrongly baselined as actors and flooded the output.
     """
 
-    n_rows = int(frame.shape[0])
+    return col.role == Role.URL or col.derived_from is not None
+
+
+def _repeat_mass(counts: pd.Series, n_rows: int) -> float:
+    """Fraction of rows whose value recurs at least :data:`ACTOR_MIN_EVENTS`.
+
+    Scale-invariant separator of a recurring-actor column (mass concentrated in
+    a bounded set of busy values) from a per-row / ephemeral column (mass spread
+    across near-unique values). ``counts`` is a value_counts() Series.
+    """
+
+    if n_rows <= 0:
+        return 0.0
+    recurring = counts[counts >= ACTOR_MIN_EVENTS]
+    return float(recurring.sum()) / n_rows
+
+
+def _is_vocabulary(values: list[str], distinct: int) -> bool:
+    """True if a column is a bounded, enum-shaped categorical vocabulary.
+
+    A bounded vocabulary (protocol, TCP state, direction) is frequency-identical
+    to a small closed actor pool, so it is separated by *shape*, not counts: it
+    is small (``distinct <= VOCAB_MAX_DISTINCT``) AND its values are mostly not
+    identifier-like (:func:`_structured_fraction` below
+    :data:`STRUCTURED_TOKEN_MIN`). A large-distinct column is never a vocabulary;
+    a small column of address-like tokens (a 40-host IP subnet) is not either.
+    """
+
+    if distinct > VOCAB_MAX_DISTINCT:
+        return False
+    return _structured_fraction(values) < STRUCTURED_TOKEN_MIN
+
+
+def _structured_fraction(values: list[str]) -> float:
+    """Fraction of distinct ``values`` that look like an identifier token.
+
+    A value is structured if it contains both a digit and a separator
+    (address / MAC / composite id) or is at least
+    :data:`_STRUCTURED_MIN_LENGTH` characters (a long opaque id). Computed over
+    *distinct* values, so a few dominant values cannot skew it.
+    """
+
+    if not values:
+        return 0.0
+    structured = sum(
+        1
+        for value in values
+        if _STRUCTURED_TOKEN_RE.search(value) or len(value) >= _STRUCTURED_MIN_LENGTH
+    )
+    return structured / len(values)
+
+
+def _entity_columns(
+    frame: pd.DataFrame, schema: Schema, categoricals: list[str]
+) -> list[str]:
+    """Pick actor-like columns to baseline per-entity: dense, recurring actors.
+
+    An entity column identifies actors (enough distinct values), each of which
+    recurs densely enough to baseline (median recurrence), and is not a bounded
+    categorical vocabulary. All tests are **scale-invariant** -- they do not use
+    ``distinct / n_rows``, which shrinks for a fixed actor population as the log
+    grows and used to silently disable this signal past ~2,000 rows.
+
+    The vocabulary exclusion (:func:`_is_vocabulary`) is what keeps degenerate
+    low-cardinality columns (e.g. CTU-13 ``Proto``/``State``) out of the
+    per-entity baseline -- the role the old cardinality-ratio floor served, now
+    done by value shape so it survives at any log size. Residual: a closed pool
+    of short unstructured ids (bare integers, usernames) is shape-ambiguous vs a
+    vocabulary and not detected here (TODO follow-up H).
+    """
+
     out: list[str] = []
     for name in categoricals:
+        col = schema.column(name)
+        if col is not None and _is_content_column(col):
+            continue
         counts = frame[name].value_counts()
         distinct = len(counts)
-        if (
-            distinct < ENTITY_MIN_DISTINCT
-            or distinct >= ENTITY_UNIQUE_RATIO_MAX * n_rows
-        ):
-            continue
-        ratio = distinct / n_rows if n_rows else 0.0
-        if not (ACTOR_MIN_RATIO <= ratio <= ACTOR_MAX_RATIO):
+        if distinct < ENTITY_MIN_DISTINCT:
             continue
         if float(counts.median()) < ENTITY_MEDIAN_RECURRENCE_MIN:
+            continue
+        if _is_vocabulary([str(v) for v in counts.index], distinct):
             continue
         out.append(name)
     return out
@@ -614,34 +710,45 @@ def _entity_baseline(
 def _actor_endpoint_columns(frame: pd.DataFrame, schema: Schema) -> list[str]:
     """Pick actor *endpoint* columns for the relational actor graph, schema-driven.
 
-    An endpoint identifies *who* communicates: a recurring high-cardinality token
-    column (an address, account, device). It is detected by shape, never by name,
-    and must sit in a cardinality-ratio band that separates it from the two things
-    it is easily confused with:
+    An endpoint identifies *who* communicates: a recurring token column (an
+    address, account, device). It is detected by shape, never by name, and must
+    be separated from the two things it is easily confused with, using only
+    **scale-invariant** tests (the old ``distinct / n_rows`` ratio band shrank
+    for a fixed actor population as the log grew, silently emptying the graph on
+    a busy log):
 
-    * a **bounded categorical vocabulary** (protocol, TCP state, region) -- a low
-      ratio, since its distinct count does not scale with the data. Excluded below
-      :data:`ACTOR_MIN_RATIO` so context columns never become graph nodes;
-    * a **per-row / per-edge identifier** (a flow id, a composite 5-tuple) -- a
-      near-unique ratio. Excluded above :data:`ACTOR_MAX_RATIO`, so an edge id is
-      not mistaken for an endpoint (which would corrupt every degree).
+    * a **bounded categorical vocabulary** (protocol, TCP state, direction) --
+      frequency-identical to a small closed actor pool, so excluded by *shape*
+      (:func:`_is_vocabulary`: small distinct AND enum-shaped values), not by any
+      count. This keeps context columns out of the graph at any log size;
+    * a **per-row / ephemeral identifier** (a flow id, an ephemeral source port,
+      a composite 5-tuple) -- its mass sits in near-unique values, so excluded
+      when :func:`_repeat_mass` falls below :data:`REPEAT_MASS_MIN`.
 
     It must also have at least :data:`ACTOR_MIN_RECURRING` values that recur
     (``>= ACTOR_MIN_EVENTS`` events), so there are real actors with a history to
     form hubs -- unlike the entity baseline, the *median* need not recur, so a
     capture dominated by one-off peers still exposes its few high-volume hubs.
+
+    Residual: a closed pool of short unstructured ids (bare integers, usernames)
+    is shape-ambiguous vs a vocabulary and not detected (TODO follow-up H).
     """
 
+    n_rows = int(frame.shape[0])
     out: list[str] = []
     for col in schema.columns:
         if col.role not in (Role.CATEGORICAL, Role.TEXT):
             continue
-        if col.n_unique <= ACTOR_MIN_DISTINCT:
+        if _is_content_column(col):
             continue
-        if not (ACTOR_MIN_RATIO <= col.cardinality_ratio <= ACTOR_MAX_RATIO):
+        if col.n_unique <= ACTOR_MIN_DISTINCT:
             continue
         counts = _stringify(frame[col.name]).value_counts()
         if int((counts >= ACTOR_MIN_EVENTS).sum()) < ACTOR_MIN_RECURRING:
+            continue
+        if _repeat_mass(counts, n_rows) < REPEAT_MASS_MIN:
+            continue
+        if _is_vocabulary([str(v) for v in counts.index], int(col.n_unique)):
             continue
         out.append(col.name)
     return out

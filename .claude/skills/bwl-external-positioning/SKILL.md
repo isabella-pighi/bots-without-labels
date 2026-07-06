@@ -75,7 +75,7 @@ per-dataset feature engineering, plus an honest measurement harness"** — engin
 | Contribution | The precise, defensible claim | The guard (do not over-state) |
 |---|---|---|
 | **Schema-agnostic role-driven detection** | The engine picks actor/timestamp/entity columns **by shape, never by name**, so one pipeline scores CICIDS, CTU-13 and UNSW with **zero per-dataset feature engineering**. | Verified across 3 netflow datasets of *similar shape*. It does **not** transfer to web logs out of the box (Bournemouth negative). "Schema-agnostic" ≠ "domain-agnostic". |
-| **Actor cardinality-ratio band gating BOTH paths** | One band (`ACTOR_MIN_RATIO`=0.02 … `ACTOR_MAX_RATIO`=0.5 on the column's cardinality ratio) types a column as a true actor, and the *same* band gates **both** per-entity baselining (`entity_monotony`) **and** graph endpoint selection (`asymmetric_degree`). One shape test excludes bounded categoricals (protocol, TCP state) below the band and per-row edge ids above it. | The band is the lever that fixed CTU-13 precision 0.041→0.978 by excluding degenerate `Proto`/`State` columns. But it is why the method goes **dormant** on Bournemouth (`session_id` falls below the band). Reusing one band for two jobs is the tidy part; it is not proven optimal. |
+| **Scale-invariant actor typing gating BOTH paths** | The *same* scale-invariant tests — recurrence + repeat-mass + value-shape — type a column as a true actor and gate **both** per-entity baselining (`entity_monotony`) **and** graph endpoint selection (`asymmetric_degree`). Value shape (not a `distinct/rows` ratio) excludes bounded enum vocabularies (protocol, TCP state) and content columns; repeat-mass excludes per-row edge ids. | Replaced an earlier `cardinality_ratio` band that was **scale-dependent** (it silently disabled the actor signals on busy fixed-population logs). The shape test still excludes `Proto`/`State` (the CTU-13 precision fix). Residual: short-unstructured ids and raw content columns are shape-ambiguous (TODO H/I); not proven optimal. |
 | **Source-fan-out-narrowed asymmetric degree with adaptive floor** | `asymmetric_degree` fires on a high-volume **source** endpoint whose out-degree exceeds an *adaptive* floor (99th percentile of the batch's own hub-subset degrees) **and** exceeds its in-degree by an order of magnitude (`DEGREE_ASYMMETRY`=10) **and** is monotone in service. Adaptive floor = self-calibrating per batch, not a fixed constant. | The *directional narrowing to source-only* was forced by the Rbot test (it over-fired on benign fan-in). Fan-out coverage is now two-family evidence; **fan-in coverage is a different rule (`entity_monotony`/hub gate) and is no-regression-guarded, not proved** (see §3). |
 | **Honest measurement harness** | Detection is measured by **synthetic label-injection** (planting known-signature bots into real traffic for recall-per-archetype) **plus** a **tiered real-data registry** (only externally-labelled captures earn a row; synthetic numbers never do). | This is a *discipline* claim, not an accuracy claim. Its value is that it refuses to launder synthetic ~1.0 recall as field accuracy. |
 
@@ -112,8 +112,8 @@ If the gate is not met, the claim is downgraded to the "may say instead" column.
 | "`DEGREE_ASYMMETRY`=10 / 99th-pct floor are the right constants" | Behaviour characterised across scales | **Guardrails, not tuned/universal constants.** Hold for asymmetry factors ≈10–100 on one split + a synthetic broadcaster; over-fire below ≈10, vanish at ≥200. | "Limited-evidence guardrails validated on this split's scale range, not scale-free constants." |
 | "Precision ~0.85–0.98 in production" | Field measurement against ground truth | **Impossible by construction** — the running system is unsupervised and has no labels; only the *benchmark* can measure precision because the *dataset* ships labels. | "Measured precision on this labelled capture; the deployed system ranks under uncertainty and cannot self-measure." |
 | "Beats published unsupervised baselines" | Head-to-head vs a named baseline's reported numbers, same split, reviewed | **NOT DONE** (see §1). | "Strong internal numbers; the beyond-SOTA comparison is an open milestone." |
-| Cite UNSW-NB15 as a bot result | It is a **broad-IDS** dataset (9 mixed attack families), not a bot capture | **UNSW numbers are NOT bot results** (recall 0.122, precision 0.198) | "Secondary generality probe on a broad-IDS dataset; not a bot-detection result." |
-| Publish the Bournemouth numbers | A clear licence permitting redistribution/publication of derived numbers | **Licence-blocked** — CERTH ITI / Bournemouth University, research use *invited* but copyright *reserved*, no formal open licence | Keep internal. Do **not** put the numbers (recall 0.474 / precision 0.020 / flag 0.681) in any external artefact until licence is cleared. |
+| Cite UNSW-NB15 as a bot result | It is a **broad-IDS** dataset (9 mixed attack families), not a bot capture | **UNSW numbers are NOT bot results** (recall 1.000, precision 0.519) | "Secondary generality probe on a broad-IDS dataset; not a bot-detection result." |
+| Publish the Bournemouth numbers | A clear licence permitting redistribution/publication of derived numbers | **Licence-blocked** — CERTH ITI / Bournemouth University, research use *invited* but copyright *reserved*, no formal open licence | Keep internal. Do **not** put the numbers (recall 0.873 / precision 0.028 / flag 0.918) in any external artefact until licence is cleared. |
 | "Scores are probabilities" / "flags are fraud" | — | **Never true.** Scores rank; a flag means "structurally unusual actor", not "confirmed bot/fraud". | "Anomaly ranking under uncertainty." |
 
 **The Bournemouth negative is itself a *citable-internally* honest result**, and it is *good practice* to
@@ -162,7 +162,7 @@ Checklist — a claim is reproducible only if **all** are present:
       recall/precision/flag rate — copied verbatim, number-for-number, from script output (never rounded
       "for effect").
 - [ ] **Versioned constants** — the git commit *and* the constant values in force at measurement time:
-      `ACTOR_MIN_RATIO=0.02`, `ACTOR_MAX_RATIO=0.5` (`features.py`), `DEGREE_ASYMMETRY=10`,
+      `REPEAT_MASS_MIN=0.3`, `VOCAB_MAX_DISTINCT=200`, `STRUCTURED_TOKEN_MIN=0.5` (`features.py`), `DEGREE_ASYMMETRY=10`,
       `DEGREE_FLOOR_PERCENTILE=0.99`, `MIN_HUB_DEGREE=3`, `W_ASYMMETRIC_DEGREE=0.70` (`rules.py`).
 - [ ] **Per-rule attribution included** — not just the headline. State which rule carried recall and
       where the residual false positives live (e.g. CTU-13 sc1: `asymmetric_degree` 2,000/2,000 clean,
@@ -178,8 +178,8 @@ Checklist — a claim is reproducible only if **all** are present:
 | CICIDS2017 / Ares | 0.998 | 0.846 | 0.037 | 0.032 | `BENCHMARKS.md` L45 |
 | CTU-13 sc1 / Neris | 1.000 | 0.978 | 0.033 | 0.032 | `BENCHMARKS.md` L46 |
 | CTU-13 sc3 / Rbot | 0.985 | 0.929 | 0.034 | 0.0323 | `BENCHMARKS.md` L47 |
-| UNSW-NB15 (secondary, broad-IDS) | 0.122 | 0.198 | 0.020 | 0.032 | `BENCHMARKS.md` L48 |
-| Bournemouth (INTERNAL ONLY) | 0.474 | 0.020 | 0.681 | 0.029 | `BENCHMARKS.md` L49 |
+| UNSW-NB15 (secondary, broad-IDS) | 1.000 | 0.519 | 0.062 | 0.032 | `BENCHMARKS.md` L48 |
+| Bournemouth (INTERNAL ONLY) | 0.873 | 0.028 | 0.918 | 0.029 | `BENCHMARKS.md` L49 |
 
 ---
 
@@ -225,7 +225,7 @@ commit; constants read from source. British English; imperative runbook voice.
 | Volatile fact | Re-verify with (read-only) |
 |---|---|
 | Benchmark numbers (CICIDS/CTU-13 sc1+sc3/UNSW/Bournemouth) | `sed -n '43,49p' evaluation/BENCHMARKS.md` |
-| Actor-band constants (0.02 / 0.5) | `grep -n "ACTOR_MIN_RATIO\|ACTOR_MAX_RATIO" bots_without_labels/features.py` |
+| Scale-invariant actor tests (0.3 / 200 / 0.5) | `grep -n "REPEAT_MASS_MIN\|VOCAB_MAX_DISTINCT\|STRUCTURED_TOKEN_MIN" bots_without_labels/features.py` |
 | Degree constants + asymmetric_degree weight (10 / 0.99 / 3 / 0.70) | `grep -n "DEGREE_ASYMMETRY\|DEGREE_FLOOR_PERCENTILE\|MIN_HUB_DEGREE\|W_ASYMMETRIC_DEGREE" bots_without_labels/rules.py` |
 | Decision rule (0.70 heuristic OR knee, 2% cap) | `sed -n '20,60p' bots_without_labels/threshold.py` and the heuristic gate in `rules.py` |
 | CTU-13 / CICIDS citation strings + licences | `sed -n '505,522p' evaluation/BENCHMARKS.md` |

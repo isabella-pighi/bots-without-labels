@@ -285,11 +285,14 @@ they encode hard-won rules about making the *adaptive* thresholds well-defined.
   the bot has no distribution to sit in — the cut is undefined or degenerate. `_network_log` adds 40 filler
   hosts whose numeric payloads *step across the whole global range* so each occupies many quantile bins and
   reads as genuinely diverse. Without spread, everything looks monotone and the rule can't discriminate.
-- **Give an actor column an in-band cardinality ratio.** The actor-endpoint band is
-  `ACTOR_MIN_RATIO`≈0.02 to `ACTOR_MAX_RATIO`≈0.5 (distinct/rows). Too few distinct values → read as a
-  bounded categorical (rule dormant); one-per-row → read as an edge id (dormant). `_broadcaster_log` uses
-  60 clients × 12 flows so the address columns clear the endpoint floor. (This band is *also* why the
-  Bournemouth web-log `session_id` went dormant — below the band; see `evaluation/FINDINGS.md`.)
+- **Make actor columns pass the scale-invariant tests.** An actor endpoint must have recurring values
+  (`≥ ACTOR_MIN_RECURRING` recur `≥ ACTOR_MIN_EVENTS`), repeat-mass `≥ REPEAT_MASS_MIN`, and be
+  identifier-*shaped* (not a small enum vocabulary) — and use **address-shaped tokens** (`10.0.0.x`), since
+  the value-shape test excludes short unstructured names. `_broadcaster_log` uses 60 clients × 12 flows of
+  IP-shaped addresses so the endpoint columns clear these tests. *(These replaced the old
+  `cardinality_ratio` band, which was scale-dependent; see `bwl-architecture-contract` §5. The band is why
+  the Bournemouth `session_id` used to go dormant — under the scale-invariant selection it is now admitted
+  and over-flags, the method limit shown directly.)*
 - **Isolate one structure per fixture.** A broadcaster fixture must *not* also contain a fan-in hub, or you
   cannot attribute a fire to one rule. Keep contexts (like `svc`) low-cardinality so they are read as
   *context*, not as a second actor node.
@@ -367,7 +370,7 @@ via shared conftest") and `3f3f770` ("Consolidate benchmark boilerplate into a s
 without changing logic. They were validated as behaviour-preserving because the harness fixes the seed
 (`DEFAULT_SEED = 7`, documented in-source as *"fixed (not varied per run) so measured numbers reproduce"*)
 and the benchmark reports diffed identically — the protected gates (CICIDS 0.998/0.846/0.037, CTU-13 sc1
-1.000/0.978/0.033, UNSW 0.122/0.198/0.020) were unchanged. That identity is the proof the consolidation was
+1.000/0.978/0.033, UNSW 1.000/0.519/0.062) were unchanged. That identity is the proof the consolidation was
 safe. (Verify the commits: `git log --oneline --since=2026-07-02 --until=2026-07-04`.)
 
 **Snippet — capture a comparable report before/after:**
@@ -423,7 +426,7 @@ present them as production accuracy or as fraud verdicts (see `bwl-external-posi
 | Rbot fan-in regression → fix | 0.056 → 0.929, recall 0.985 | `grep -n "0.056\|0.929" evaluation/FINDINGS.md` |
 | Predicted-FP origin commit | `2a3f362` (2026-06-25) | `git show -s --format=%ci 2a3f362` |
 | Refactor-audit commits | `3e93f14`, `3f3f770` (2026-07-03) | `git log --oneline --since=2026-07-02 --until=2026-07-04` |
-| Recorded gate numbers | CICIDS 0.998/0.846/0.037; CTU sc1 1.000/0.978/0.033; sc3 0.985/0.929/0.034; UNSW 0.122/0.198/0.020 | `grep -n "0.846\|0.978\|0.929\|0.198" evaluation/BENCHMARKS.md` |
+| Recorded gate numbers | CICIDS 0.998/0.846/0.037; CTU sc1 1.000/0.978/0.033; sc3 0.985/0.929/0.034; UNSW 1.000/0.519/0.062 | `grep -n "0.846\|0.978\|0.929\|0.519" evaluation/BENCHMARKS.md` |
 
 Numbers marked "~" are approximate in the source docs (tie-sensitive attribution); re-run
 `evaluation/rule_diagnostic.py` if you need the exact current split. The Bournemouth web-log numbers are

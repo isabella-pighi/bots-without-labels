@@ -101,7 +101,7 @@ def test_entity_monotony_escalates_only_for_a_hub(
     dst = log.frame["dst"].astype(str).to_numpy()
     src = log.frame["src"].astype(str).to_numpy()
 
-    hub_rows = np.where(dst == "c2hub")[0]
+    hub_rows = np.where(dst == "10.0.0.9")[0]
     assert _fired(result, "entity_monotony", hub_rows).all()
     assert (result.scores[hub_rows] >= HEURISTIC_CUTOFF).all()
     hub_reason = next(
@@ -111,7 +111,7 @@ def test_entity_monotony_escalates_only_for_a_hub(
     )
     assert "counterpart" in hub_reason  # the explanation cites the fan-in
 
-    channel_rows = np.where((src == "backup") & (dst == "store"))[0]
+    channel_rows = np.where((src == "10.0.1.1") & (dst == "10.0.1.2"))[0]
     assert not _fired(result, "entity_monotony", channel_rows).any()
     assert (result.scores[channel_rows] < HEURISTIC_CUTOFF).all()
 
@@ -122,13 +122,16 @@ def test_entity_monotony_falls_back_without_relational_structure(
     """With a single entity column there is no source/hub structure to read, so
     the hub gate is dormant and the rule fires on monotony alone."""
 
+    # IP-shaped actor tokens so the scale-invariant shape test admits the column
+    # as an actor pool (a single entity column, so no relational hub structure).
+    bot = "192.168.0.99"
     rows = ["actor,action,size"]
     for _ in range(30):
-        rows.append("botactor,beacon,1")
+        rows.append(f"{bot},beacon,1")
     actions = ["get", "post", "put", "del"]
     for i in range(12):
         for j in range(6):
-            rows.append(f"user{i},{actions[(i + j) % 4]},{(i * 7 + j * 13) % 50}")
+            rows.append(f"192.168.1.{i},{actions[(i + j) % 4]},{(i * 7 + j * 13) % 50}")
     path = tmp_path / "single.csv"
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
@@ -140,7 +143,7 @@ def test_entity_monotony_falls_back_without_relational_structure(
     assert result.thresholds["min_hub_degree"] is None
 
     actor = log.frame["actor"].astype(str).to_numpy()
-    bot_rows = np.where(actor == "botactor")[0]
+    bot_rows = np.where(actor == bot)[0]
     assert _fired(result, "entity_monotony", bot_rows).all()
     assert (result.scores[bot_rows] >= HEURISTIC_CUTOFF).all()
 

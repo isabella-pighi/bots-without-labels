@@ -297,8 +297,8 @@ uv run --extra eif python -m evaluation.run_benchmarks --only ctu13,cicids2017
   (registry) and `evaluation/FINDINGS.md` (narrative). **Tracked (real, externally labelled),
   as recorded 2026-07-04:** CICIDS2017/Ares recall 0.998 / precision 0.846 / flag 0.037;
   CTU-13 sc1/Neris 1.000 / 0.978 / 0.033; CTU-13 sc3/Rbot 0.985 / 0.929 / 0.034.
-  **Secondary:** UNSW-NB15 0.122 / 0.198 / 0.020 (broad IDS, not a bot result); Bournemouth
-  web logs 0.474 / 0.020 / 0.681 (**provisional, licence-pending; negative domain transfer**).
+  **Secondary:** UNSW-NB15 1.000 / 0.519 / 0.062 (broad IDS, not a bot result); Bournemouth
+  web logs 0.873 / 0.028 / 0.918 (**provisional, licence-pending; negative domain transfer**).
   Source: `evaluation/FINDINGS.md` / `evaluation/BENCHMARKS.md` — re-verify before quoting.
 - The **synthetic** suite is a stress test only and runs via `pytest`, never appears in this
   table, and is never a tracked accuracy number.

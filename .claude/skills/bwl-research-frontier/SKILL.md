@@ -68,7 +68,7 @@ baseline, or building the capture that lets you measure it.
 | 1 | Label-free botnet detection on CTU-13 at rare base rates | 1.000/0.978 (sc1 Neris), 0.985/0.929 (sc3 Rbot) **label-free** | Beat published **label-free** numbers on **≥5** CTU-13 scenarios under a pre-registered protocol | **Strongest** — asset already measured on 2 scenarios |
 | 2 | The ML-tail calibration frontier | `feature_deviations()` + per-rule attribution; ~70% of residual error is EIF-only | ML-only FP **halved**, recall held on **ALL** tracked benchmarks | **Tractable** — instrumentation exists; mechanism unknown |
 | 3 | Build a public fan-in-bot benchmark | Injection harness plants calibrated signatures into real backgrounds | A published, reproducible fan-in benchmark **+ measured coverage** | **Fills a real gap** — no such public capture found |
-| 4 | Cross-domain schema-agnostic generality (band adaptation) | Schema-by-shape actor band; skip-if-absent runner | An adaptation that lifts an out-of-domain capture **with netflow gates held** | **Hard / honest** — Bournemouth is a negative; heavy proof burden |
+| 4 | Cross-domain schema-agnostic generality (value-shape residual) | Scale-invariant shape-based actor typing (band adaptation partly delivered); skip-if-absent runner | An adaptation that types short-unstructured-id / content-column actors **with netflow gates held** | **Hard / honest** — Bournemouth is a negative; heavy proof burden |
 
 Pick 1 first: it is the only bet whose asset is *already measured* and whose only
 missing piece is disciplined comparison. Pick 2 if you want a self-contained
@@ -224,7 +224,7 @@ deviation signatures — you are not staring at an opaque tree path.
 **You have a result when …** ML-only false positives are **halved** on the
 captures you targeted **and** recall is held (within its pinned guard) on **every
 tracked benchmark**: CICIDS 0.998, CTU-13 sc1 1.000, CTU-13 sc3 0.985, UNSW-NB15
-0.122, Bournemouth unchanged. A precision gain on one capture that dents recall
+1.000, Bournemouth unchanged. A precision gain on one capture that dents recall
 or precision anywhere else is not the result — the guards in
 `tests/test_real_benchmark.py` and `tests/test_ctu13_benchmark.py` exist to make
 that failure loud.
@@ -318,40 +318,34 @@ benchmark is not proof the blind spot is empty — `FINDINGS.md`).
 
 **Honestly labelled HARD.** This is the "does the method transfer beyond
 netflow?" question, and the one live data point is a **negative**: Bournemouth
-web logs scored recall 0.474 / precision **0.020** — *below* the 0.029 base rate,
+web logs scored recall 0.873 / precision **0.028** — *below* the 0.029 base rate,
 worse than chance (`BENCHMARKS.md` L49; `FINDINGS.md` "Domain transfer"). State
 that up front in any pitch of this bet; do not sell it as a near-win.
 
-**Why SOTA "fails" here is subtle — it is a method limit, not a bug.** Two
-domain-transfer effects, both diagnosed, neither a regression: (a) the actor
-rules went **dormant** because `session_id`'s cardinality ratio falls *below* the
-actor band (`ACTOR_MIN_RATIO = 0.02`, `features.py`), so it reads as a bounded
-categorical, not an actor endpoint; (b) timing over-fired on page-load bursts,
-flagging 68% of rows. The tempting fix — *force* `session_id` active by widening
-the band — was tested in the Phase-1 diagnosis and **fails**: forced active,
-`entity_monotony` caught **0 of 11** bot sessions and flagged monotone *humans*,
-because bot and human diversity, timing CV, request entropy and volume all
-**overlap** (`FINDINGS.md` "Phase-1 diagnosis"; `TODO.md` item 12). So the band
-is *not* the lever for the human-mimicking web-bot case.
+**Why SOTA "fails" here is subtle — it is a method limit, not a bug.** Under the
+scale-invariant actor selection `session_id` **is** admitted as a per-entity
+actor, and `entity_monotony` over it **over-flags** (~92% of rows): a monotone
+human session is as self-similar as a bot session, so the rule fires on humans
+too. This is the method limit shown *directly* — the Phase-1 diagnosis predicted
+it (forced active under the old band, `entity_monotony` caught **0 of 11** bot
+sessions and flagged monotone *humans*), because bot and human diversity, timing
+CV, request entropy and volume all **overlap** (`FINDINGS.md`; `TODO.md` item 12).
+So entity selection is *not* the lever for the human-mimicking web-bot case.
 
-**Where the real frontier is (and isn't).** The *band-adaptation* question is
-narrower and honest: **can the actor band adapt to a new schema's entity
-cardinality without breaking the netflow gates?** That is a legitimate open
-problem — the band is currently two fixed constants (`ACTOR_MIN_RATIO = 0.02`,
-`ACTOR_MAX_RATIO = 0.5`) that separate an actor from a bounded categorical and
-from a per-row edge id. A capture whose genuine actor sits *outside* that band
-(as `session_id` does) is invisible to the actor rules. An **adaptive** band
-(gap/knee on the cardinality-ratio distribution, echoing the deferred adaptive
-diversity-cut follow-up in `FINDINGS.md`) could type entities by shape *relative
-to the batch* rather than by absolute constants.
+**Where the real frontier is (and isn't).** The earlier *band-adaptation*
+question — can actor typing adapt to a new schema's cardinality without breaking
+the netflow gates? — was **partly delivered** by the scale-invariance work: the
+cardinality-ratio band is gone, replaced by scale-invariant recurrence/repeat-mass/
+value-shape tests that type entities by *shape relative to the batch* rather than by
+absolute ratio constants. What remains open is the **value-shape residual**: a
+closed pool of *short unstructured* ids (bare integers, usernames) and *content*
+columns (a raw request-`path`) are still shape-ambiguous — see TODO follow-ups H/I.
+Cross-domain generality on that residual is the live frontier.
 
-**But note the hard boundary:** even a perfect adaptive band does **not** fix
-Bournemouth, because the Phase-1 diagnosis showed the *features don't separate
-the classes there at all*. Band adaptation is worth pursuing for **schema
-generality on captures where an in-band actor and a real signal both exist** (a
-new netflow-like domain with unusual cardinality), **not** as a route to
-human-mimicking web bots — that is `bwl-webbot-campaign` / TODO item 12, a
-separate biometric capability.
+**But note the hard boundary:** even perfect actor typing does **not** fix
+Bournemouth, because the features do not separate the classes there at all — that
+is `bwl-webbot-campaign` / TODO item 12, a separate biometric capability, not an
+actor-selection problem.
 
 **This repo's specific asset.** The whole detector is already **schema-by-shape,
 never by name** (`_actor_endpoint_columns`, `_entity_columns` in `features.py`),
@@ -421,11 +415,11 @@ captures are gitignored).
 | Decision rule + heuristic cutoff 0.70 | `grep -n "HEURISTIC_CUTOFF\|is_bot =" /Users/isabella/bots-without-labels/bots_without_labels/pipeline.py` |
 | Shipped archetypes (no fan-in among them) | `grep -n "^ARCHETYPES" /Users/isabella/bots-without-labels/bots_without_labels/synthetic.py` |
 | Injection clusters one value per column (no fan-in star yet) | `sed -n '152,181p' /Users/isabella/bots-without-labels/bots_without_labels/inject.py` |
-| Actor band constants 0.02 / 0.5 | `grep -n "ACTOR_MIN_RATIO\|ACTOR_MAX_RATIO" /Users/isabella/bots-without-labels/bots_without_labels/features.py` |
+| Scale-invariant actor tests 0.3 / 200 / 0.5 | `grep -n "REPEAT_MASS_MIN\|VOCAB_MAX_DISTINCT\|STRUCTURED_TOKEN_MIN" bots_without_labels/features.py` |
 | feature_deviations() shipped (TODO item 3) | `grep -n "def feature_deviations" /Users/isabella/bots-without-labels/bots_without_labels/anomaly.py` |
 | CTU-13 scenario wrapper (`--scenario` / `--binetflow`) | `grep -n "SCENARIOS\|--binetflow" /Users/isabella/bots-without-labels/evaluation/ctu13_bot_benchmark.py` |
 | run_benchmarks --only keys | `grep -n 'key=' /Users/isabella/bots-without-labels/evaluation/run_benchmarks.py` |
 | No public fan-in-bot benchmark (verified absence) | `grep -n "no real external fan-in" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
-| Bournemouth negative 0.474/0.020, method-limit not bug | `grep -n "0.474\|Phase-1 diagnosis" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
+| Bournemouth negative 0.873/0.028, method-limit not bug | `grep -n "0.873\|Phase-1 diagnosis" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
 | Garcia et al. 2014 is the CTU-13 baseline citation | `grep -n "Garcia\|empirical comparison" /Users/isabella/bots-without-labels/evaluation/ctu13_bot_benchmark.py` |
 | Full suite collects and passes | `uv run pytest --collect-only -q \| tail -1` |

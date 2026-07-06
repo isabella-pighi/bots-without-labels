@@ -84,6 +84,31 @@ Old item E, second bullet: a `session ID` / numeric IP is typed numeric, so
 per-entity baselining and id handling miss it. Couples with the
 schema-override / entity-id hints in item 4.
 
+### I. Actor-selection residuals from the scale-invariant fix (P2/P3)
+
+The scale-invariant actor selection (recurrence + repeat-mass + value shape,
+replacing the cardinality-ratio band) left two known residuals, both value-shape
+edge cases:
+
+- **Short unstructured actor ids.** A *closed* pool of short, non-identifier-shaped
+  values — bare integers, usernames, mnemonic hostnames — is frequency- and
+  shape-ambiguous vs a bounded enum vocabulary, so it is not detected as an actor.
+  Overlaps item H (integer-coded identifiers).
+- **Raw content columns.** URL and URL-derived columns are excluded
+  (`_is_content_column`), but a *raw* request-`path` field (non-URL-typed content) is
+  still admitted as a pseudo-actor and over-flags on web logs (visible in the
+  Bournemouth secondary result). Generic content-column detection without value
+  semantics is the open problem; couples with item 12.
+
+### J. Drift checker: flag citations of removed constants (P3)
+
+`.claude/skills/bwl-docs-and-writing/scripts/check_golden_numbers.py` flags a skill
+that cites a constant with the *wrong value*, but not one that cites a constant which
+no longer exists in source (it builds its constant set *from* source). Removing
+`ACTOR_MIN_RATIO`/`ACTOR_MAX_RATIO` in the scale-invariance fix left stale skill
+references the checker did not catch. Add a check that flags skill citations of an
+`UPPER_SNAKE = value` constant name absent from the source modules.
+
 ## P1: Core Promise
 
 ### 1. Run the schema-driven engine end to end
