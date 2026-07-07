@@ -8,11 +8,17 @@ repos:
   - repo: local
     hooks:
       # --- pre-commit: fast, every commit ------------------------------------
+      # Scoped to the commit stage only. Without an explicit `stages` a hook runs
+      # at EVERY installed stage, so these would also fire at pre-push — and the
+      # main-guard would then wrongly refuse a legitimate `git push origin main`
+      # of already-reviewed, fast-forwarded work (its intent is to block *commits*
+      # on main, not pushes).
       - id: black
         name: black (format check)
         entry: uv run black --check
         language: system
         types: [python]
+        stages: [pre-commit]
 
       - id: no-commit-to-main
         name: no direct commits to main (AGENTS.md §6)
@@ -20,6 +26,7 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-commit]
 
       # --- pre-push: slower, before sharing ----------------------------------
       - id: pytest-hermetic
