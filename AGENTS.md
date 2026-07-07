@@ -76,11 +76,12 @@ uv run --extra eif pytest -q              # + Extended Isolation Forest backend 
 uv run --extra eif python -m evaluation.run_benchmarks   # real-data gates (needs local datasets)
 ```
 
-Real-data benchmarks (CTU-13, CICIDS, Bournemouth) need large, licence-bound,
+Real-data benchmarks (CTU-13, CICIDS, UNSW, Bournemouth) need large, licence-bound,
 gitignored datasets, so they are a **local/manual gate** and skip when the data is
-absent — CI runs the hermetic suite only. See
-[`.claude/skills/bwl-build-run-operate`](.claude/skills/bwl-build-run-operate) and
-[`bwl-validation-and-qa`](.claude/skills/bwl-validation-and-qa).
+absent — CI runs the hermetic suite only. How to obtain each dataset (source,
+size, licence, fetch command) is documented in [`data/README.md`](data/README.md);
+see also [`.claude/skills/bwl-build-run-operate`](.claude/skills/bwl-build-run-operate)
+and [`bwl-validation-and-qa`](.claude/skills/bwl-validation-and-qa).
 
 ## Where the detail lives
 
