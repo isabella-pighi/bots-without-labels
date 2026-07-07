@@ -671,6 +671,98 @@ precision and should not be revisited without first carrying the rule guards int
 matrix. No headline benchmark numbers changed — the variants were not shipped, and the
 `2be1811` baseline stands.
 
+## Quantile-ranking the numeric value features — a measured wash (TODO item 5)
+
+The numeric `<col>__val` features (flow duration, byte and packet counts) are fed to
+the matrix as their median-filled raw magnitude. They are heavy-tailed, so the standing
+idea (TODO item 5) was to replace the raw value with a **quantile-rank** transform —
+each numeric column mapped to its rank in `[0, 1]`, uniform by construction — on the
+theory that a heavy tail distorts the isolation forest's random-hyperplane cuts. One
+premise correction first: robust *scaling* is **already done** — `anomaly._robust_standardize`
+centres every column on its median and scales by MAD before the forest. That is a
+*linear* map, so it fixes scale and centre but not tail *shape*; the quantile-rank is
+the only part not already applied. It was probed offline (matrix transform only, no
+engine change) on CICIDS, and it is a **measured wash**: recorded here so it is not
+re-attempted.
+
+| seed | baseline precision | quantile precision | Δ |
+|---|---|---|---|
+| 7  | 0.879 | 0.893 | **+0.014** |
+| 13 | 0.740 | 0.967 | **+0.227** |
+| 21 | 0.933 | 0.727 | **−0.206** |
+| 42 | 0.933 | 0.767 | **−0.166** |
+
+*Recall held at 0.998 on every seed; only the ML path moved (the heuristic never reads
+`__val`).* The sign of the change is **not stable** — it swings ±0.2 purely on which
+benign rows the mix samples. The first seed's +0.014 was the trap: measured alone it
+reads as a small win; across seeds it is noise.
+
+The reason is visible in the same table. The **baseline** precision already swings
+**0.740–0.933** across seeds, and the ML-only flag rate swings with it (0.0005–0.0118).
+The CICIDS residual is dominated by a small, intrinsically unstable **rate-capped EIF
+tail**; quantile-ranking merely reshuffles *which* ~1 % of rows that tail isolates, and
+whether the reshuffle helps or hurts is a coin-flip on the sample. The numeric
+representation is not the lever — the tail's calibration is, and that is a separate open
+problem (the ML-tail calibration bet), not something a feature-shape transform reaches.
+
+**Honest scope.** This tests the quantile-rank transform on CICIDS across four seeds;
+it does not prove no shape transform could ever help a *stabilised* tail. It shows that
+on the capture where the ML path carries most of the residual error, the transform buys
+no reliable precision and is swamped by tail variance an order of magnitude larger than
+its mean effect. TODO item 5 ("compare robust vs quantile scaling") is answered:
+measured-negative. No thresholds were tuned, no feature was shipped, and the committed
+benchmark numbers are unchanged.
+
+## Vectorising the feature-build loops — the row-loops are a red herring (no bit-identical win)
+
+`_entity_baseline`, `_actor_graph` and `_temporal_context` iterate row-by-row in Python,
+so the standing performance idea was to *vectorise the per-row loops*. Profiled on the
+real CICIDS mix (62k rows, 84 feature columns), `build_features` takes **13.5s**, of which
+`_entity_baseline` (4.2s) + `_actor_graph` (3.4s) are **56%** — linearly ~3.6 min at 1M
+rows. So the cost is real. But three measurements show the idea, as scoped, does not reach it.
+
+**1. The named per-row loops are 0.5% of the cost.** Instrumenting `_entity_baseline`'s hot
+path: the `for index in range(n_rows)` members-build loop is **0.006s**; the
+entropy-per-group work — ~97k small `np.unique`/Shannon-entropy calls, one per entity-group
+× behaviour column — is **99%** (1.03s). Vectorising the row loops the idea names buys ~0.5%.
+
+**2. The only real speedup is not bit-identical — so it is a behaviour change, not a refactor.**
+A groupby-vectorised entropy (one `groupby([entity, colvalue]).size()` per column, replacing
+the 97k `np.unique` sorts) runs **3.0×** faster on the hot path (1.01s → 0.34s). But its
+output drifts from the current path by **4.4e-16 across 1,179 of 7,498 groups** — last-ULP,
+because pandas' group reduction accumulates `-(p·log p)` differently from numpy's per-group
+sum. A refactor's contract is *bit-identical* output; a last-ULP drift can in principle flip a
+threshold tie and move a pinned benchmark number, so this cannot ride the behaviour-preservation
+diff gate. It would have to be validated as a behaviour change (full benchmark no-regression).
+
+**3. The bit-identical variant is slower.** Keeping the reduction as the identical numpy op in
+`np.unique`'s ascending-value order (so counts and summation order match exactly) does reach
+**max|diff| = 0** — but at **0.58×** (nearly 2× *slower*): the nested per-entity groupby and
+MultiIndex construction cost more than the `np.unique` calls they remove.
+
+**Conclusion.** On this code there is **no vectorisation that is both faster and bit-identical**:
+the speedup (3× on ~½ of `build_features`) and the diff gate are mutually exclusive. The
+proposed row-loop vectorisation targets the 0.5%, not the 99%. The real win exists only as a
+benchmark-gated behaviour change, and its payoff (≈13.5s → ~10s at 62k; ≈3.6 min → ~2.5 min at
+1M) is justified only by a genuine 1M-row / full-day workload, which the current benchmarks
+(62k) do not pose. Parked until production-scale runs are real; revisit then on the
+behaviour-change track, not as a refactor. Related note: the EIF fit does **not** scale with n
+(`sample_size=min(4096, n)`, so each tree sees ≤4096 rows); only `decision_function` scoring
+does, and it already costs ≈ `build_features` at 100k — so halving feature-build only gets the
+end-to-end cost to ~half, never below.
+
+Two adjacent refinements were scoped in the same pass and left unmeasured-or-parked:
+*correlation-pruning the concentration features* (measured collinearity on CICIDS:
+`context__conc` ↔ `Destination IP__conc` = **0.839** — the joint-context feature largely
+duplicates the dominant categorical's concentration, but any precision effect is second-order
+to the same rate-capped-tail variance that swamped the quantile probe, so it needs the same
+multi-seed treatment before it means anything); and *numeric-coded identifier inference*
+(TODO follow-up H) — a genuine gap (`_entity_columns`/`_actor_endpoint_columns` scan only
+CATEGORICAL/TEXT roles, so a numeric session-id or numeric IP is skipped) but with **no
+measured loss** on any capture we hold (CICIDS/CTU-13 addresses are string-typed and already
+selected as actors), and a precision risk (a dtype-agnostic recurrence check could pull genuine
+numeric *measurements* into the actor graph). Both await a dataset that actually exercises them.
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was

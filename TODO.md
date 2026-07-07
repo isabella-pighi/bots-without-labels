@@ -167,11 +167,19 @@ calibration, all residual false positives were tier-3 (ML-only) flags.
 - Optional user hints (which column is the timestamp / entity id) when
   autodetection is uncertain.
 
-### 5. Robust scaling for heavy-tailed features
+### 5. Robust scaling for heavy-tailed features — DONE (measured-negative)
 
 Log features are often heavy-tailed: a few values appear thousands of times while
 most appear once. Compare standardisation with robust or quantile scaling and
 keep whichever improves stability and explanation.
+
+Resolved. Robust (median/MAD) scaling is already applied in
+`anomaly._robust_standardize`. The remaining option — a nonlinear quantile-rank of
+the numeric `__val` columns — was probed on CICIDS across four seeds and is a
+**measured wash**: precision Δ swings ±0.2 on the sampling seed alone (sign not
+stable), swamped by the intrinsic variance of the rate-capped EIF tail. See
+`evaluation/FINDINGS.md`, "Quantile-ranking the numeric value features". Not
+shipped; no reliable improvement to keep.
 
 ### 6. Rolling burst windows
 
