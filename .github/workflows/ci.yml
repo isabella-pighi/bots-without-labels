@@ -1,13 +1,14 @@
 name: CI
 
 # Enforces the hermetic gates the project already defines but until now ran only
-# by hand: formatting (black) and the unit / synthetic test suite. The real-data
-# benchmarks (CTU-13, CICIDS, Bournemouth) need large, licence-bound, gitignored
-# datasets, so their tests skip when the data is absent — they remain a
-# local/manual gate by design (see AGENTS.md, "Build, run, validate"). CI runs
-# without the `eif` extra: the Extended Isolation Forest backend falls back
-# cleanly and the hermetic suite passes either way, keeping CI off a compiled
-# dependency.
+# by hand: formatting (black) and the unit / synthetic test suite. Installs the
+# `eif` extra so the Extended Isolation Forest is the active backend — the
+# detection-quality gates (e.g. mechanical_timing recall >= 0.85) are calibrated
+# for it, and the dependency-free fallback scorer is weaker, so those tests fail
+# without it. The real-data benchmarks (CTU-13, CICIDS, UNSW, Bournemouth) need
+# large, licence-bound, gitignored datasets, so their tests skip when the data is
+# absent — they remain a local/manual gate by design (see AGENTS.md,
+# "Build, run, validate").
 
 on:
   push:
@@ -34,11 +35,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
-      - name: Sync dependencies (locked)
-        run: uv sync --frozen
+      - name: Sync dependencies (locked, with EIF backend)
+        run: uv sync --frozen --extra eif
 
       - name: Formatting gate (black)
         run: uv run black --check .
 
-      - name: Hermetic test suite
-        run: uv run pytest -q
+      - name: Hermetic test suite (EIF backend; real-data benchmarks skip)
+        run: uv run --extra eif pytest -q

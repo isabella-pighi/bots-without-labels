@@ -23,8 +23,8 @@ repos:
 
       # --- pre-push: slower, before sharing ----------------------------------
       - id: pytest-hermetic
-        name: hermetic test suite
-        entry: uv run pytest -q
+        name: hermetic test suite (EIF backend)
+        entry: uv run --extra eif pytest -q
         language: system
         pass_filenames: false
         always_run: true
