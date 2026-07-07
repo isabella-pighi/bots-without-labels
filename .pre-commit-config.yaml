@@ -1,0 +1,31 @@
+# Mechanical enforcement of guardrails the project currently follows by
+# convention. Install once with:  uvx pre-commit install --install-hooks
+#                                  uvx pre-commit install --hook-type pre-push
+# (pre-commit is a developer-machine tool run via uvx, not a project dependency;
+#  the hooks themselves use the project's own uv-run tools, so versions never
+#  drift from pyproject / uv.lock.)
+repos:
+  - repo: local
+    hooks:
+      # --- pre-commit: fast, every commit ------------------------------------
+      - id: black
+        name: black (format check)
+        entry: uv run black --check
+        language: system
+        types: [python]
+
+      - id: no-commit-to-main
+        name: no direct commits to main (AGENTS.md §6)
+        entry: bash -c 'branch=$(git rev-parse --abbrev-ref HEAD); if [ "$branch" = "main" ]; then echo "Refusing to commit to main — branch and route through review (AGENTS.md §6)."; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # --- pre-push: slower, before sharing ----------------------------------
+      - id: pytest-hermetic
+        name: hermetic test suite
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

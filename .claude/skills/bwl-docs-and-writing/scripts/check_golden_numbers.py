@@ -244,7 +244,9 @@ def _provenance_tail(text: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--quiet", action="store_true", help="only print flags + verdict")
+    parser.add_argument(
+        "--quiet", action="store_true", help="only print flags + verdict"
+    )
     parser.add_argument(
         "--no-commit", action="store_true", help="skip the HEAD provenance check"
     )
@@ -275,7 +277,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.quiet:
         print(f"repo: {root}")
-        print(f"allowlist: {len(allow)} metric triples from BENCHMARKS.md + FINDINGS.md")
+        print(
+            f"allowlist: {len(allow)} metric triples from BENCHMARKS.md + FINDINGS.md"
+        )
         print(f"constants: {len(constants)} module-level values from source")
         print()
 
@@ -317,9 +321,11 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         print(f"scanned {len(skill_files)} skills")
         if git_available:
-            print("provenance: all cited commits are ancestors of HEAD" if not
-                  stamp_flags else f"provenance: {len(stamp_flags)} skill(s) cite "
-                  "unknown commits")
+            print(
+                "provenance: all cited commits are ancestors of HEAD"
+                if not stamp_flags
+                else f"provenance: {len(stamp_flags)} skill(s) cite " "unknown commits"
+            )
         print()
 
     if triple_flags:

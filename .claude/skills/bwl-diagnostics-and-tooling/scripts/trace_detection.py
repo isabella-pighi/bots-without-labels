@@ -56,7 +56,9 @@ def trace(log_path: Path, top_n: int) -> int:
     thresholds = result.rules_result.thresholds
 
     _section("Decision state (thresholds dict + ML threshold)")
-    print(f"  decision: is_bot = heuristic >= {HEURISTIC_CUTOFF:.2f} OR ml_score > ml_threshold")
+    print(
+        f"  decision: is_bot = heuristic >= {HEURISTIC_CUTOFF:.2f} OR ml_score > ml_threshold"
+    )
     print(
         f"  ml_threshold={result.ml_threshold:.6f} "
         f"(method={result.ml_threshold_method}, backend={result.ml_backend})"
@@ -93,7 +95,9 @@ def trace(log_path: Path, top_n: int) -> int:
     _section("Evidence tiers")
     n_rows = len(result.is_bot)
     n_flagged = int(result.is_bot.sum())
-    print(f"  rows={n_rows}  flagged={n_flagged}  flag_rate={n_flagged / max(n_rows, 1):.4f}")
+    print(
+        f"  rows={n_rows}  flagged={n_flagged}  flag_rate={n_flagged / max(n_rows, 1):.4f}"
+    )
     labels = {
         1: "tier 1 (rules AND ml agree)",
         2: "tier 2 (rules only)",
@@ -104,7 +108,9 @@ def trace(log_path: Path, top_n: int) -> int:
         print(f"  {labels[tier]:<36}{int((result.evidence_tier == tier).sum()):>8}")
 
     _section(f"Top {top_n} flagged rows (by combined score)")
-    selected = sorted(flagged_rows, key=lambda i: result.combined[i], reverse=True)[:top_n]
+    selected = sorted(flagged_rows, key=lambda i: result.combined[i], reverse=True)[
+        :top_n
+    ]
     if not selected:
         print("  (nothing flagged)")
         return 0
@@ -134,7 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         description="Trace a detection run: schema, thresholds, rule fires, tiers, top flags.",
     )
     parser.add_argument("log", type=Path, help="path to a CSV/TSV/JSON/JSONL log")
-    parser.add_argument("--top", type=int, default=5, help="flagged rows to detail (default 5)")
+    parser.add_argument(
+        "--top", type=int, default=5, help="flagged rows to detail (default 5)"
+    )
     args = parser.parse_args(argv)
     if not args.log.is_file():
         parser.error(f"log file not found: {args.log}")
