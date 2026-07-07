@@ -168,6 +168,55 @@ Two further limits are tracked as follow-ups, not fixed on this branch:
   every actor looks monotonous, carrying no signal), via an absolute diversity
   ceiling. That is why the synthetic suite is unaffected.
 
+## Periodicity for slow/jittered beacons — a measured non-starter on our captures
+
+The ceiling above nominates **sub-minute timing cadence** as the next discriminator to
+separate a beacon from a busy benign hub, where the timestamp resolution allows. The
+microsecond CTU-13 captures have exactly that resolution, so we tested the idea directly
+— an **offline, supervised-label diagnostic**, no engine change. For every
+`(SrcAddr, DstAddr)` channel with ≥ 30 events, a **robust periodicity score** = the
+fraction of consecutive inter-arrival gaps within ±25% of that channel's median gap (an
+autocorrelation-peak proxy over the whole series, so periods longer than the 10-second
+run window are visible); a channel is labelled bot if the majority of its flows are
+`From-Botnet`. Three measured facts, all pointing the same way.
+
+**1. It does not separate bot from benign.**
+
+| Capture | Bot channels (≥ 30 events) | Periodicity AUC | Reading |
+|---|---|---|---|
+| CTU-13 sc1 / Neris | 170 | 0.552 | no separation (≈ coin-flip) |
+| CTU-13 sc3 / Rbot | 1 | 0.833 | **N = 1 — not separation; must not be quoted** |
+
+**2. Zero headroom on the data we own.** 0 of 170 Neris and 0 of 1 Rbot bot beacon
+channels have a period > 10 s — every beacon here already sits **inside** the current
+10-second run window. Neris beacons are **sub-second bursts**, already owned by
+`same_instant_burst` / `local_burst`; the single Rbot beacon is **3.7 s**. So a > 10 s
+periodicity feature adds **no measurable recall** on these captures.
+
+**3. Benign traffic is intensely periodic at the very same cadences.** At score ≥ 0.80
+and period ≥ 1 s, **756 of 4,248** benign Rbot channels are strongly periodic — at the
+same **3.6–3.7 s** cadence as the one Rbot bot beacon. A lone periodicity rule would
+flag **756 benign channels to catch 1 bot**. (Neris has 0 benign and 0 bot at period
+≥ 1 s, because its beacons are sub-second.)
+
+**Two gates for any future periodicity work.**
+
+1. **A real structural gap — but gated on data we do not own.** Periodicity is the right
+   idea for *slow / jittered beacons with period > 10 s*, which the burst rules cannot
+   see. But no capture we hold contains such a beacon, so the recall gain is
+   **unmeasurable here** and cannot be claimed until a dataset with genuine slow beacons
+   is in hand.
+2. **Never a lone strong rule.** Benign traffic is periodic at bot cadences (measured
+   **756 : 1** on Rbot), so periodicity carries a large false-fire risk. Any future use
+   must be **supporting evidence, capped below the 0.70 decision cutoff**, or corroborated
+   by the monotony / hub gates — never strong evidence on its own.
+
+**Honest scope.** This tests the CTU-13 **microsecond fast beacons** only; it does *not*
+prove slow beacons are undetectable in principle. It shows that on the data we own a
+> 10 s periodicity feature has **zero measurable recall headroom and a measured precision
+downside**. No detector thresholds were tuned, no rule was added, and the committed
+benchmark numbers are unchanged.
+
 ## The third discriminator: asymmetric endpoint degree (CTU-13 / Neris)
 
 The two CICIDS discriminators above handle a *passive fan-in star*: one C2 that
