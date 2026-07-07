@@ -115,6 +115,22 @@ no longer exists in source (it builds its constant set *from* source). Removing
 references the checker did not catch. Add a check that flags skill citations of an
 `UPPER_SNAKE = value` constant name absent from the source modules.
 
+### K. Feature-build vectorisation at production scale (P3, parked)
+
+`build_features` is ~13.5s on the 62k CICIDS mix (linearly ~3.6 min at 1M rows),
+of which `_entity_baseline` + `_actor_graph` are ~56%. Profiling showed the named
+per-row Python loops are only 0.5% of the cost; 99% is entropy-per-group
+(~97k `np.unique`/Shannon-entropy calls). A groupby-vectorised entropy is 3.0×
+faster but drifts 4.4e-16 (**not bit-identical** → a behaviour change, not a
+refactor); the bit-identical variant is *slower* (0.58×). So there is no
+speedup that also rides the behaviour-preservation diff gate. **Re-entry
+trigger:** a genuine ~1M-row / full-day workload. **Then:** ship the
+groupby-vectorised entropy on the behaviour-change track (full benchmark
+no-regression, not bit-identical), targeting the two entropy loops only; note the
+EIF fit is subsample-bounded (`sample_size=min(4096, n)`) so scoring, not fitting,
+is the co-equal cost and feature-build can only reach ~half of end-to-end. Full
+measurements in `evaluation/FINDINGS.md`, "Vectorising the feature-build loops".
+
 ## P1: Core Promise
 
 ### 1. Run the schema-driven engine end to end
