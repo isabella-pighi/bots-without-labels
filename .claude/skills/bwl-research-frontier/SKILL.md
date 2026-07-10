@@ -409,17 +409,17 @@ captures are gitignored).
 
 | Volatile fact | One-line re-verification |
 |---|---|
-| HEAD commit is 8a85edd | `git -C /Users/isabella/bots-without-labels rev-parse --short HEAD` |
-| CTU-13 sc1 1.000/0.978, sc3 0.985/0.929; CICIDS 0.998/0.846 | `grep -nE '0\.978\|0\.929\|0\.846' /Users/isabella/bots-without-labels/evaluation/BENCHMARKS.md` |
-| Residual FP is mostly ML-only (Rbot 151/151; CICIDS ~253/358) | `grep -n "ML-only" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
-| Decision rule + heuristic cutoff 0.70 | `grep -n "HEURISTIC_CUTOFF\|is_bot =" /Users/isabella/bots-without-labels/bots_without_labels/pipeline.py` |
-| Shipped archetypes (no fan-in among them) | `grep -n "^ARCHETYPES" /Users/isabella/bots-without-labels/bots_without_labels/synthetic.py` |
-| Injection clusters one value per column (no fan-in star yet) | `sed -n '152,181p' /Users/isabella/bots-without-labels/bots_without_labels/inject.py` |
+| HEAD commit is 8a85edd | `git rev-parse --short HEAD` |
+| CTU-13 sc1 1.000/0.978, sc3 0.985/0.929; CICIDS 0.998/0.846 | `grep -nE '0\.978\|0\.929\|0\.846' evaluation/BENCHMARKS.md` |
+| Residual FP is mostly ML-only (Rbot 151/151; CICIDS ~253/358) | `grep -n "ML-only" evaluation/FINDINGS.md` |
+| Decision rule + heuristic cutoff 0.70 | `grep -n "HEURISTIC_CUTOFF\|is_bot =" bots_without_labels/pipeline.py` |
+| Shipped archetypes (no fan-in among them) | `grep -n "^ARCHETYPES" bots_without_labels/synthetic.py` |
+| Injection clusters one value per column (no fan-in star yet) | `sed -n '152,181p' bots_without_labels/inject.py` |
 | Scale-invariant actor tests 0.3 / 200 / 0.5 | `grep -n "REPEAT_MASS_MIN\|VOCAB_MAX_DISTINCT\|STRUCTURED_TOKEN_MIN" bots_without_labels/features.py` |
-| feature_deviations() shipped (TODO item 3) | `grep -n "def feature_deviations" /Users/isabella/bots-without-labels/bots_without_labels/anomaly.py` |
-| CTU-13 scenario wrapper (`--scenario` / `--binetflow`) | `grep -n "SCENARIOS\|--binetflow" /Users/isabella/bots-without-labels/evaluation/ctu13_bot_benchmark.py` |
-| run_benchmarks --only keys | `grep -n 'key=' /Users/isabella/bots-without-labels/evaluation/run_benchmarks.py` |
-| No public fan-in-bot benchmark (verified absence) | `grep -n "no real external fan-in" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
-| Bournemouth negative 0.873/0.028, method-limit not bug | `grep -n "0.873\|Phase-1 diagnosis" /Users/isabella/bots-without-labels/evaluation/FINDINGS.md` |
-| Garcia et al. 2014 is the CTU-13 baseline citation | `grep -n "Garcia\|empirical comparison" /Users/isabella/bots-without-labels/evaluation/ctu13_bot_benchmark.py` |
+| feature_deviations() shipped (TODO item 3) | `grep -n "def feature_deviations" bots_without_labels/anomaly.py` |
+| CTU-13 scenario wrapper (`--scenario` / `--binetflow`) | `grep -n "SCENARIOS\|--binetflow" evaluation/ctu13_bot_benchmark.py` |
+| run_benchmarks --only keys | `grep -n 'key=' evaluation/run_benchmarks.py` |
+| No public fan-in-bot benchmark (verified absence) | `grep -n "no real external fan-in" evaluation/FINDINGS.md` |
+| Bournemouth negative 0.873/0.028, method-limit not bug | `grep -n "0.873\|Phase-1 diagnosis" evaluation/FINDINGS.md` |
+| Garcia et al. 2014 is the CTU-13 baseline citation | `grep -n "Garcia\|empirical comparison" evaluation/ctu13_bot_benchmark.py` |
 | Full suite collects and passes | `uv run pytest --collect-only -q \| tail -1` |

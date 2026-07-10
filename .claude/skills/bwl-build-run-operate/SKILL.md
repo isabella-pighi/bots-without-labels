@@ -49,7 +49,7 @@ it creates and syncs the venv from `uv.lock` on first `uv run`. No manual venv s
 ### Canonical path (uv) — and the install-verification command
 
 ```bash
-cd /Users/isabella/bots-without-labels
+cd bots-without-labels                     # the repo root, wherever it is cloned
 uv run --extra eif python -m pytest        # verifies the install; expect ~80+ passed, all green
 ```
 

@@ -14,11 +14,11 @@ Claude-Code-specific notes.
   `bwl-validation-and-qa` before claiming a number is citable,
   `bwl-failure-archaeology` before re-attempting a rejected idea.
 
-- **Memory** persists at
-  `/Users/isabella/.claude/projects/-Users-isabella-bots-without-labels/memory/`
-  with a one-line index in `MEMORY.md`. It is working context, **not** the source
-  of truth (AGENTS.md §4) — verify any recalled file/flag/threshold against the
-  current repository before acting on it.
+- **Memory** persists in Claude Code's per-project memory directory
+  (`~/.claude/projects/<project-slug>/memory/`, where the slug is derived from
+  this repository's absolute path) with a one-line index in `MEMORY.md`. It is
+  working context, **not** the source of truth (AGENTS.md §4) — verify any
+  recalled file/flag/threshold against the current repository before acting on it.
 
 - **The team.** "Use the team" / "Claude + OpenAI" means orchestrate the HCOM
   agents (product manager routes; Codex reviews Claude), not solo work. See
