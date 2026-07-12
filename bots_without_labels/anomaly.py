@@ -40,8 +40,8 @@ DEGENERATE_ANOMALY_SCORE = 0.5
 rows/features to model, or a constant fallback score vector."""
 
 TOP_DEVIATION_FEATURES = 5
-"""Feature deviations reported per explained row: enough to read why a row is
-anomalous, short enough to scan in a review queue."""
+"""Feature deviations reported per explained row: enough context to triage a
+flagged row, short enough to scan in a review queue."""
 
 _MAD_TO_STD = 1.4826  # makes MAD a consistent estimator of the std for normal data
 
@@ -81,13 +81,17 @@ def feature_deviations(
     *,
     top_k: int = TOP_DEVIATION_FEATURES,
 ) -> list[list[dict[str, object]]]:
-    """Explain rows by their strongest feature deviations from the batch baseline.
+    """Report each row's largest marginal feature deviations from the batch baseline.
 
-    An anomaly score alone tells a reviewer nothing actionable. This turns a
-    high-scoring row into readable evidence: for each requested row, the
-    ``top_k`` features whose values sit furthest from the batch baseline, in the
-    **same robust (median / MAD) space the anomaly model scores in** — so the
-    explanation describes exactly the deviations that drove the score.
+    An anomaly score alone tells a reviewer nothing actionable. This gives a
+    high-scoring row readable triage context: for each requested row, the
+    ``top_k`` largest **marginal** robust-z deviations, computed in the same
+    robust (median / MAD) feature space the anomaly model scores in. Sharing
+    that space makes the deviations relevant context, not an attribution: they
+    say which of the row's feature values are extreme within the batch, not how
+    much each feature contributed to the score (the EIF isolates rows on
+    feature *combinations*, which a per-feature marginal view cannot
+    apportion).
 
     Args:
         matrix: ``(n_rows, n_features)`` float matrix, as scored by

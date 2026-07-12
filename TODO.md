@@ -68,21 +68,24 @@ synthetic suite. Extends item 10.
 
 Several engine changes were committed directly to `main`, bypassing the
 PM-commits-only protocol and the cross-model ML-engineer review it requires.
-Have the ML-engineer-reviewer (Codex) review each before treating it as final;
-review either closes the debt or is replaced by an explicit, dated owner waiver
-per commit:
+Retroactive ML-engineer (Codex) reviews have now recorded an outcome for each:
 
 - `98646c1` — per-entity baselining + CICIDS benchmark (`features.py` /
-  `rules.py`).
+  `rules.py`). Reviewed and closed (2026-07-12): approved with no blocking
+  findings.
 - `543129a` — constants extraction, tuning-param exposure, docstrings across
-  `bots_without_labels/*.py` (behaviour-preserving; benchmarks verified
-  bit-identical, so low correctness risk).
-- `fc4e3c7` — ML-tail feature deviations (`anomaly.py` / `pipeline.py`;
-  additive and decision-neutral — pay-per-use, no change to scoring or
-  decisions).
+  `bots_without_labels/*.py`. Reviewed and closed (2026-07-12): approved with
+  no blocking findings; residual risk noted that the full historical
+  bit-identical benchmark set was not rerun.
+- `fc4e3c7` — ML-tail feature deviations (`anomaly.py` / `pipeline.py`).
+  Reviewed (2026-07-12): one attribution-wording blocker found, resolved by a
+  wording-only fix in `bots_without_labels/anomaly.py` and
+  `bots_without_labels/pipeline.py`, then approved with no blocking findings.
 
-All have since been benchmark-verified, so this is protocol debt rather than
-correctness risk.
+*Status: closed (2026-07-12).* All three commits retroactively reviewed as
+above. The reviews clear process debt on these specific commits; benchmark
+figures cited in them are measurements on labelled captures, not evidence of
+production precision.
 
 ### H. Integer-coded identifier inference (P2/P3)
 

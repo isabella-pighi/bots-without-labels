@@ -95,7 +95,7 @@ class DetectionResult:
     def feature_deviations(
         self, rows: list[int], *, top_k: int = TOP_DEVIATION_FEATURES
     ) -> list[list[dict[str, object]]]:
-        """Explain rows by their strongest feature deviations from the batch.
+        """Report rows' largest marginal feature deviations from the batch.
 
         The readable counterpart of :meth:`reasons` for the ML path: an ML-only
         flag (evidence tier 3) has no rule reason, but its top robust-z
