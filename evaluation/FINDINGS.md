@@ -812,6 +812,84 @@ measured loss** on any capture we hold (CICIDS/CTU-13 addresses are string-typed
 selected as actors), and a precision risk (a dtype-agnostic recurrence check could pull genuine
 numeric *measurements* into the actor graph). Both await a dataset that actually exercises them.
 
+## Attack-family coverage: the rest of CICIDS2017 (follow-up F)
+
+The tracked CICIDS2017 benchmark measures the one family in the archive that is
+actually a **botnet** (Ares). Roadmap follow-up F asked what the detector does with
+the archive's other six labelled attack families — port scanning, DDoS, web attacks,
+infiltration, credential brute force, DoS. These are *attacks, not bots*, so the six
+new probes (`evaluation/cicids_family_benchmark.py`, wired into the unified runner)
+are **secondary attack-coverage measurements**, built on the same rare-attack mix
+convention as the sibling benchmarks and never citable as bot-detection results.
+
+### Predicted first, then measured
+
+Directional predictions were recorded on the review thread before running anything.
+The grounding facts, measured from the slices themselves: every family slice is a
+single NATed IP channel (`172.16.0.1 → 192.168.10.50`), so `asymmetric_degree`
+should stay dormant everywhere — even the port scan fans out only in ports, not
+IPs; the minute-quantised clock gates the dense-timing rules off; and the ML path's
+2% flag-rate cap bounds ML-only recall at ~0.62 for a 2,000-positive mix. The
+measured results (recall / precision / flag rate, base rate 0.032 except where
+noted):
+
+| Probe | Recall | Precision | Flag rate |
+|---|---|---|---|
+| `cicids_portscan` | 1.000 | 0.585 | 0.055 |
+| `cicids_ddos` | 1.000 | 0.786 | 0.041 |
+| `cicids_webattacks` (base 0.035) | **0.000** | **0.000** | 0.158 |
+| `cicids_infiltration` (36 positives, base ~0.001) | 0.472 | 0.002 | 0.131 |
+| `cicids_bruteforce` | 1.000 | 0.168 | 0.192 |
+| `cicids_dos` | 0.040 | **0.008** | 0.160 |
+
+Three results broke the predictions: recall 1.000 on PortScan, DDoS and BruteForce
+sits far above the ~0.62 ML ceiling, and DoS came in far below its predicted band.
+Per the methodology, the surprises were attributed with
+`evaluation/rule_diagnostic.py` on all six mixes before being reported.
+
+### One mechanism explains all six: `entity_monotony` in two regimes
+
+Which regime a file lands in is decided by how many entity columns it qualifies:
+
+- **Friday files (PortScan, DDoS)** qualify both `Source IP` and `Destination IP`,
+  so the entity graph is active and the **hub-gated** monotony rule catches the
+  dense single-channel attack outright — 2,000/2,000 positives on both families, at
+  fire precision 0.636 (PortScan) and 0.958 (DDoS). Recall 1.000 comes from the
+  heuristic path, not the ML tail.
+- **Tuesday/Wednesday/Thursday files (BruteForce, DoS, WebAttacks, Infiltration)**
+  qualify only `Destination IP`, so the entity graph is inactive and the **ungated
+  single-entity-column low-diversity fallback** fires instead — on 7,500–9,600
+  benign rows per mix at fire precision 0.000–0.175, which is where the 13–19% flag
+  rates come from. The same fallback catches the BruteForce slice (a ~21-minute
+  single-channel SSH-Patator burst: recall 1.000 at precision 0.168) while missing
+  WebAttacks and DoS entirely, because the victim web server's entity shows high
+  behavioural diversity.
+
+Everything else behaved as predicted: dense-timing rules gated (60 s grid),
+`asymmetric_degree` dormant (no IP fan-out), ML-only flags within the 2% cap on
+every mix (211–457 rows).
+
+### What stands, and what does not
+
+The weak results are kept as first-class findings, not softened: **WebAttacks recall
+0.000** (human-paced web attacks over one channel are invisible to this method on
+this mix), **DoS precision 0.008 — below the 0.032 base rate**, worse than chance on
+that mix, and **Infiltration precision 0.002** on the only 36 labelled flows the
+archive holds (base rate ~0.001 caps precision near zero mechanically; qualitative
+signal only). Nothing was tuned to improve any of them.
+
+The honest ceiling: these are six slices of **one archive** with a minute-quantised,
+AM/PM-less clock, so the contiguous slices are parse-order windows with partial
+subfamily coverage (BruteForce = SSH-Patator only; DoS = slowloris + Heartbleed
+only), and none of the numbers says anything about bot detection or transfers beyond
+CICIDS2017. The one actionable discovery is the **ungated single-entity-column
+monotony fallback**: it drives every weak probe's flag rate and both
+at-or-below-chance precisions. Whether to gate or calibrate it is an engine decision
+with regression risk to captures where the fallback carries recall, so it was
+deliberately left untouched in this measurement-only pass and recorded as TODO
+follow-up L. Registry rows, mix caveats and reproduce commands live in
+`evaluation/BENCHMARKS.md`, "CICIDS2017 attack-family coverage probes".
+
 ## Takeaway
 
 The skeleton (unsupervised, role-driven, explainable) is sound; the gap was

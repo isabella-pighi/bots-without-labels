@@ -41,10 +41,11 @@ story of each arc lives in `evaluation/FINDINGS.md` and `evaluation/BENCHMARKS.m
   `regular_timing` rule is byte-identical. CICIDS 0.846 → 0.879, flag 0.037 → 0.036
   (ML-only false positives ~253 → 165); CTU-13 sc1 0.978 → 0.971; sc3 0.929 → 0.9319;
   all recalls flat. The "drop `dt` entirely" variant was rejected (CTU -4.8 pts).
-- **Benchmark suite grown** (old item C, largely done) — CTU-13 sc1 + sc3,
+- **Benchmark suite grown** (old item C, now done) — CTU-13 sc1 + sc3,
   UNSW-NB15 (secondary), Bournemouth web logs (honest negative transfer), all
   skip-if-absent behind one runner (`evaluation/run_benchmarks.py`) and a shared
-  harness (`evaluation/harness.py`). Remaining: other CICIDS families (below).
+  harness (`evaluation/harness.py`). The remaining CICIDS attack families were
+  closed by follow-up F (2026-07-12, below).
 - **`Infinity`/`NaN` sanitised before standardisation** (old item E, first
   bullet) — see the non-finite handling in `features.py`.
 - **Items 1 and 2 (P1 core)** — the schema-driven end-to-end pipeline and the
@@ -63,6 +64,19 @@ same `GeneratedLabelledFlows.zip` already used by the Ares benchmark, and the
 shared harness makes each family mostly a `build_mix` + spec. Tracks
 recall/precision per attack type so a regression cannot hide behind the
 synthetic suite. Extends item 10.
+
+*Status: closed (2026-07-12).* Six secondary attack-coverage probes
+(`cicids_portscan`, `cicids_ddos`, `cicids_webattacks`, `cicids_infiltration`,
+`cicids_bruteforce`, `cicids_dos`) run skip-if-absent through
+`evaluation/run_benchmarks.py`, guarded by `tests/test_cicids_family_benchmark.py`,
+with predictions recorded before measurement and surprises attributed via
+`rule_diagnostic` (ML change reviewed with no blockers). Measured and registered in
+`evaluation/BENCHMARKS.md` (story in `evaluation/FINDINGS.md`): PortScan
+1.000/0.585, DDoS 1.000/0.786, BruteForce 1.000/0.168 (recall/precision), alongside
+three first-class weak results — WebAttacks recall 0.000, DoS precision 0.008
+(below the 0.032 base rate), Infiltration precision 0.002 on 36 positives. These
+are attack-coverage measurements, not bot-detection results. The over-firing
+single-entity-column monotony fallback they exposed is follow-up L.
 
 ### G. Route direct-to-main engine commits through HCOM Codex review (process)
 
@@ -133,6 +147,21 @@ no-regression, not bit-identical), targeting the two entropy loops only; note th
 EIF fit is subsample-bounded (`sample_size=min(4096, n)`) so scoring, not fitting,
 is the co-equal cost and feature-build can only reach ~half of end-to-end. Full
 measurements in `evaluation/FINDINGS.md`, "Vectorising the feature-build loops".
+
+### L. Decide whether to gate the single-entity-column monotony fallback (P2, decision needed)
+
+The CICIDS attack-family probes (follow-up F) showed that when a capture qualifies
+only **one** entity column, `entity_monotony`'s low-diversity fallback runs without
+the hub gate and fired on 7,500–9,600 benign rows per 62k mix (13–19% flag rates,
+fire precision 0.000–0.175 on those mixes) — the driver of the WebAttacks and DoS
+at-or-below-chance precisions. Whether to gate or calibrate the fallback is an
+**engine change** with regression risk to captures where that same fallback carries
+recall (it alone caught the BruteForce burst), so it needs the full
+predict–attribute–verify loop and cross-model review. It was deliberately not
+touched in the measurement-only follow-up F pass; evidence in
+`evaluation/FINDINGS.md`, "Attack-family coverage: the rest of CICIDS2017".
+
+*Status: not started — pending an owner decision on whether to open the engine work.*
 
 ## P1: Core Promise
 

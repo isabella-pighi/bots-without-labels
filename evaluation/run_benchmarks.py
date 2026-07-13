@@ -16,6 +16,10 @@ Honest framing, carried straight from ``evaluation/FINDINGS.md``:
   here, and never appears in this table as a tracked accuracy number.
 * UNSW-NB15 is a **secondary, best-effort breadth check** (broad IDS, not a
   botnet capture); it skips unless the raw flow shards are present.
+* The ``cicids_*`` family rows are **secondary attack-coverage probes** over
+  the non-botnet CICIDS2017 families (port scan, DDoS, web attacks,
+  infiltration, brute force, DoS). They are attacks, not bots -- read them
+  as coverage measurements, never as bot-detection results.
 
 The bulk datasets are gitignored and large, so absent benchmarks skip rather
 than fail -- this runner mirrors ``tests/test_real_benchmark.py`` and
@@ -33,6 +37,7 @@ from dataclasses import dataclass
 from evaluation import (
     bournemouth_benchmark,
     cicids_bot_benchmark,
+    cicids_family_benchmark,
     ctu13_bot_benchmark,
     unsw_benchmark,
 )
@@ -52,6 +57,30 @@ class Benchmark:
     absent_reason: str
     run: Callable[[], dict]
     caveat: str
+
+
+def _cicids_family_rows() -> tuple[Benchmark, ...]:
+    """One secondary row per CICIDS attack family (skip-if-absent, shared zip).
+
+    These are attack-coverage probes over the non-botnet families in
+    GeneratedLabelledFlows.zip — attacks, not bots, so they are framed like
+    UNSW: secondary breadth checks, never tracked bot-detection results.
+    """
+
+    # Deferred lookups for monkeypatching, as with the literal entries below.
+    # pylint: disable=unnecessary-lambda
+    return tuple(
+        Benchmark(
+            key=spec.key,
+            title=spec.title,
+            tier="secondary",
+            present=lambda: cicids_family_benchmark.DEFAULT_ZIP.exists(),
+            absent_reason=f"{cicids_family_benchmark.DEFAULT_ZIP} absent",
+            run=lambda key=spec.key: cicids_family_benchmark.run(key),
+            caveat=spec.note,
+        )
+        for spec in cicids_family_benchmark.FAMILIES
+    )
 
 
 # The ``lambda: module.attr...`` wrappers are deliberate, not redundant: they
@@ -136,7 +165,7 @@ BENCHMARKS: tuple[Benchmark, ...] = (
             "specified -- numbers internal pending confirmation."
         ),
     ),
-)
+) + _cicids_family_rows()
 # pylint: enable=unnecessary-lambda
 
 

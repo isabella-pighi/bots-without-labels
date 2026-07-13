@@ -78,6 +78,14 @@ probe and an honest **negative** result: precision (0.028) sits *below* the base
 licence is unclear (research use invited, copyright reserved). Read it as a
 domain-transfer finding, not a detector benchmark — see its section below.
 
+Beyond the table, six further **secondary attack-coverage probes** cover the
+remaining labelled CICIDS2017 attack families (port scan, DDoS, web attacks,
+infiltration, brute force, DoS). They are six mixes cut from the one
+already-registered archive, and they are *attacks, not botnets* — none of their
+numbers is a bot-detection result — so they are registered with their own table and
+caveats in the **CICIDS2017 attack-family coverage probes** section below rather
+than alongside the bot rows above.
+
 ### Reproduce
 
 The single repeatable entry point runs **every** benchmark, skips the ones whose
@@ -355,7 +363,7 @@ at (`FINDINGS.md` lines 8–23).
 |---|---|---|
 | Hugging Face | `mindweave/web-server-logs` | Flagged rows' bot-UA rate ≈ the base rate — **no lift** to measure. |
 | Kaggle | `tunguz/clickstream-data-for-online-shopping` | **No labels**; surfaced over-long sessions only. |
-| Local zip | CICIDS2017 PortScan flows | Attacks were **55%** of the sample — the majority, so not anomalous. |
+| Local zip | CICIDS2017 PortScan flows | Attacks were **55%** of the sample — the majority, so not anomalous. *(Superseded: the family is now measured as a proper ~3% rare-attack mix — see the attack-family coverage probes section below.)* |
 
 A fair test needs a *rare*, externally-labelled attack population; the first three
 fail on majority-class, missing-label or coarse-timestamp grounds.
@@ -442,6 +450,115 @@ raw records from the official source:
 `evaluation/unsw_benchmark.py` remains **skip-if-absent**: with no shard present it
 contributes no number; this row reflects the run with `UNSW-NB15_1.csv` in place.
 Extending the measurement across all four shards is a natural follow-up.
+
+---
+
+## CICIDS2017 attack-family coverage probes (secondary)
+
+The tracked CICIDS2017 row above measures the Friday-morning **botnet** (Ares) — the
+one CICIDS family that is actually a bot. These six probes cover the **remaining
+labelled attack families** in the same archive. They are **secondary attack-coverage
+probes**: port scans, floods, web attacks, an infiltration and credential brute
+force are *attacks, not botnets*, and most are not the automated who-talks-to-whom
+traffic the detector is built for. Read every number here as a measurement of what
+the method incidentally covers — never as a bot-detection result. A low recall on a
+family is a coverage fact, not a regression.
+
+| Probe | Source file (CICIDS day) | Positives in mix | Rows | Base rate | Flag rate | Recall | Precision |
+|---|---|---|---|---|---|---|---|
+| `cicids_portscan` | Friday afternoon | 2,000 of 158,930 (contiguous slice) | 62,000 | 0.032 | 0.055 | 1.000 | 0.585 |
+| `cicids_ddos` | Friday afternoon | 2,000 of 128,027 (contiguous slice) | 62,000 | 0.032 | 0.041 | 1.000 | 0.786 |
+| `cicids_webattacks` | Thursday morning | all 2,180 (brute force 1,507 + XSS 652 + SQLi 21) | 62,180 | 0.035 | 0.158 | **0.000** | **0.000** |
+| `cicids_infiltration` | Thursday afternoon | all 36 that exist | 60,036 | 0.001 | 0.131 | 0.472 | 0.002 |
+| `cicids_bruteforce` | Tuesday | 2,000 (slice entirely SSH-Patator) | 62,000 | 0.032 | 0.192 | 1.000 | 0.168 |
+| `cicids_dos` | Wednesday | 2,000 (slowloris 1,989 + Heartbleed 11) | 62,000 | 0.032 | 0.160 | 0.040 | **0.008** |
+
+Measured with the same gitignored `data/GeneratedLabelledFlows.zip` as the Ares
+benchmark, through the shared harness (seed 7, 60,000 sampled benign background,
+positives = each family's configured labelled non-benign slice — large families
+cut to a contiguous 2,000-row slice, small families kept whole, per the table —
+label held out before scoring). **No detector threshold, weight, or rule was
+changed for these runs**, and the weak results below are preserved as measured,
+not tuned away.
+
+**Mix caveats — read these before the numbers.** Every family slice is a single
+NATed source→destination IP channel (CICIDS routes all attacks through
+`172.16.0.1 → 192.168.10.50`), so there is no IP fan-out anywhere — even the port
+scan fans out only in ports. Timestamps are minute-quantised and written without an
+AM/PM marker, so afternoon hours parse as early morning; the contiguous,
+time-ordered slices are therefore parse-order windows, which limits subfamily
+coverage: the BruteForce slice is entirely SSH-Patator (FTP-Patator uncovered) and
+the DoS slice is slowloris (1,989) plus Heartbleed (11), with
+Hulk/GoldenEye/Slowhttptest uncovered. WebAttacks keeps all 2,180 positives (three
+sub-attacks). Infiltration has **only 36 labelled flows in the whole archive**, so
+the ~3% mix convention is impossible — its base rate is ~0.001 and its digits are
+qualitative signal only.
+
+### What the numbers mean — one mechanism, two regimes
+
+Directional predictions were recorded on the review thread **before** any
+measurement run. Three results — recall 1.000 on PortScan, DDoS and BruteForce —
+exceeded the predicted ML-path ceiling (~0.62 under the 2% ML flag-rate cap), so
+the surprises were attributed with `evaluation/rule_diagnostic.py` before being
+reported. One mechanism explains all six outcomes: **`entity_monotony` in two
+regimes**, decided by how many entity columns the file qualifies.
+
+- **Two entity columns (Friday files: PortScan, DDoS).** `Source IP` and
+  `Destination IP` both qualify, the entity graph is active, and the hub-gated
+  monotony rule catches the dense single-channel attack outright — it fired on
+  2,000/2,000 positives on both, at fire precision 0.636 (PortScan) and 0.958
+  (DDoS) per the diagnostic. That is what lifts recall to 1.000 at moderate flag
+  rates.
+- **One entity column (Tuesday/Wednesday/Thursday files: BruteForce, DoS,
+  WebAttacks, Infiltration).** Only `Destination IP` qualifies, the entity graph is
+  inactive, and the **ungated single-entity-column low-diversity fallback** fires on
+  7,500–9,600 benign rows per mix at fire precision 0.000–0.175 — the 13–19% flag
+  rates. It catches the BruteForce burst (a ~21-minute single-channel SSH-Patator
+  run, hence recall 1.000 at precision 0.168) but misses WebAttacks and DoS
+  entirely: the victim web server's entity shows high behavioural diversity.
+
+Dense-timing rules are gated off everywhere (60 s grid) and `asymmetric_degree` is
+dormant everywhere (no IP fan-out), both as predicted. ML-only flags stayed within
+the 2% cap on every mix (211–457 rows).
+
+### The negative results, stated plainly
+
+- **WebAttacks: recall 0.000, precision 0.000.** Low-volume, human-paced web
+  attacks over one channel are invisible to this method on this mix — and the
+  fallback still flags 15.8% of the rows, all of them wrong.
+- **DoS: precision 0.008, below the 0.032 base rate.** On this mix a flagged row is
+  *less* likely to be an attack than a randomly chosen one — worse than chance.
+- **Infiltration: precision 0.002 on 36 positives.** Near-zero precision; with a
+  ~0.001 base rate the precision is mechanically capped near zero even at perfect
+  recall, and 36 positives cannot support statistically robust digits either way.
+
+These are first-class results: they show what "attack coverage" honestly looks like
+when a who-talks-to-whom detector is pointed at attack shapes it was never built
+for.
+
+### Proposed follow-up (out of scope here — an engine decision)
+
+The ungated single-entity-column monotony fallback drives all three weak probes'
+13–19% flag rates and the at-or-below-chance precisions on WebAttacks and DoS.
+Whether to gate or calibrate that fallback is an **engine decision**, deliberately
+not taken in this measurement-only pass — recorded as TODO follow-up L, pending an
+owner decision.
+
+### Reproduce
+
+```bash
+# all six (skip when the archive is absent)
+uv run --extra eif python -m evaluation.run_benchmarks \
+    --only cicids_portscan,cicids_ddos,cicids_webattacks,cicids_infiltration,cicids_bruteforce,cicids_dos
+
+# one family directly
+uv run --extra eif python -m evaluation.cicids_family_benchmark --family cicids_dos
+```
+
+`tests/test_cicids_family_benchmark.py` guards the mix policy hermetically (label
+held out, unlabelled trailer rows dropped, per-family slice policy) and skips its
+real-data smoke test when the archive is absent. No quality floor is pinned — the
+secondary policy, as with UNSW.
 
 ---
 
