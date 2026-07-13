@@ -281,10 +281,21 @@ scope**. Trailer: `Co-Authored-By:` as your environment's commit rules specify.
   `evaluation/` and flags any skill citing `NAME = value` that disagrees with source
   (the high-harm class — a stale `HEURISTIC_CUTOFF` or `DEGREE_ASYMMETRY` misleads an
   engineer); constants defined with different values in different modules (e.g. per-
-  benchmark `N_BOT`) are ambiguous and skipped. It catches typos and
-  registry/source-updated-but-skill-stale drift; it does *not* judge whether the
-  registry or source value is itself right (that is `bwl-validation-and-qa`). Re-verify
-  each flag against the docs/source before editing — ground truth wins, never the skill.
+  benchmark `N_BOT`) are ambiguous and skipped. It further flags a skill citing an
+  UPPER_SNAKE constant **that no longer exists in source** as if it were current —
+  any claim-shaped mention (`NAME = value`, `NAME (value)`, or a `| NAME | value |`
+  table row with a numeric value); this is the `ACTOR_MIN_RATIO` class, where
+  guidance outlives the constant it describes. **Historical-mention convention:**
+  a line citing a dead constant must say so on the same line — one of *removed,
+  replaced, superseded, deprecated, no longer, formerly, legacy, earlier design* —
+  and is then never flagged. Bare name mentions without a value claim are always
+  fine. Only `.claude/skills/*/SKILL.md` files are checked for this;
+  `evaluation/FINDINGS.md` narrates dead constants historically by design. Run
+  `--self-test` for the built-in fixtures proving the classifier. The checker
+  catches typos and registry/source-updated-but-skill-stale drift; it does *not*
+  judge whether the registry or source value is itself right (that is
+  `bwl-validation-and-qa`). Re-verify each flag against the docs/source before
+  editing — ground truth wins, never the skill.
 - **Roadmap hygiene:** when an item ships, move it *out* of the open list into a
   Shipped one-liner with its commit ref; keep the full story in FINDINGS, not TODO.
 - **Provisional stays provisional.** Licence-pending numbers (Bournemouth) carry the

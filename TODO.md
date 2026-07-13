@@ -133,6 +133,20 @@ no longer exists in source (it builds its constant set *from* source). Removing
 references the checker did not catch. Add a check that flags skill citations of an
 `UPPER_SNAKE = value` constant name absent from the source modules.
 
+*Status: closed (2026-07-13).* The checker now also flags a skill citing a
+claim-shaped `UPPER_SNAKE` constant (`NAME = value`, `NAME (value)`, or a
+`| NAME | value |` table row) whose name no longer exists in source — the
+`ACTOR_MIN_RATIO` class. Scope is deliberately narrow: skill drift in
+`.claude/skills/*/SKILL.md` only (`evaluation/FINDINGS.md` narrates dead constants
+historically by design), with precision-first exclusions for env/tooling/command
+lines and bare name mentions; a line carrying explicit historical wording
+(*removed, replaced, superseded, deprecated, …*) is intentionally never flagged,
+so recorded history stays writable. Reviewed with no blockers: `--self-test`
+passes all 9 built-in fixtures, an independent negative control
+(`ACTOR_MIN_RATIO = 0.02` cited as current) is flagged while the existing
+historical references stay unflagged, and the full run over 16 skills ends
+VERDICT clean.
+
 ### K. Feature-build vectorisation at production scale (P3, parked)
 
 `build_features` is ~13.5s on the 62k CICIDS mix (linearly ~3.6 min at 1M rows),

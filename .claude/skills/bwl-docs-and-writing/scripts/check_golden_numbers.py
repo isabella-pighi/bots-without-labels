@@ -28,7 +28,23 @@ The docs of record are the single source of truth. This script:
    skill would send an engineer down a wrong path. Constants defined with
    different values in different modules (e.g. per-benchmark ``N_BOT``) are
    ambiguous and skipped.
-5. Checks every commit hash cited in a skill's Provenance section is a real
+5. Flags any skill making a *current-constant claim* — ``NAME = value`` or
+   ``NAME (value)`` with a numeric value — for an UPPER_SNAKE name that is
+   ABSENT from source. This is the removed-constant class: after the
+   cardinality-ratio band was deleted, a skill still citing
+   ``ACTOR_MIN_RATIO = 0.02`` as current guidance would mislead an engineer,
+   and the value check above cannot see it (the name is no longer in its
+   constant set). Historical mentions are legitimate and suppressed by
+   convention: a line citing a dead constant must carry explicit historical
+   wording (``removed``, ``replaced``, ``superseded``, ``deprecated``,
+   ``no longer``, ``formerly``, ``legacy``, ``earlier design``) — see
+   bwl-docs-and-writing SKILL.md. Only ``.claude/skills/*/SKILL.md`` files are
+   scanned: ``evaluation/FINDINGS.md`` narrates dead constants historically by
+   design, and the docs of record are ground truth, not guidance to check.
+   Env/tooling names (``UV_CACHE_DIR``-style), bare name mentions without a
+   claim form, command lines, and no-underscore acronyms are all excluded to
+   keep precision high — a checker that cries wolf gets ignored.
+6. Checks every commit hash cited in a skill's Provenance section is a real
    ancestor of ``HEAD`` — catching a typo, a fabricated hash, or a reference to
    a commit that only exists on an unmerged branch. (It does NOT demand the
    authoring stamp equal HEAD: a committed library's stamp always trails HEAD by
@@ -46,7 +62,8 @@ USAGE
     # or plain: python3 .claude/skills/bwl-docs-and-writing/scripts/check_golden_numbers.py
 
 Exit code 0 = clean, 1 = at least one drift/typo/stale-stamp flagged.
-Options: --quiet (only print flags + verdict), --no-commit (skip the HEAD check).
+Options: --quiet (only print flags + verdict), --no-commit (skip the HEAD check),
+--self-test (run the built-in absent-constant fixtures and exit).
 
 Stdlib only. Safe: reads files and runs `git rev-parse` read-only; writes nothing.
 """
@@ -79,6 +96,36 @@ _COMMAND_HINT = re.compile(r"grep|rev-parse|pytest|collect-only")
 _NUMBER = r"-?\d[\d_]*(?:\.\d+)?(?:[eE]-?\d+)?"
 # A module-level constant definition: NAME = <number>  (trailing comment ok).
 _CONST_DEF_RE = re.compile(rf"^([A-Z][A-Z0-9_]+)\s*=\s*({_NUMBER})\s*(?:#.*)?$")
+# Any module-level UPPER_SNAKE assignment, numeric or not (string sentinels,
+# tuples, paths): these names EXIST in source, so citing them is never the
+# removed-constant class even when the value is not checkable.
+_ANY_CONST_DEF_RE = re.compile(r"^([A-Z][A-Z0-9_]+)\s*=")
+# A current-constant CLAIM: an UPPER_SNAKE name (>= 1 underscore, so prose
+# acronyms, table headers and words like STRONG/SUPPORTING never match)
+# followed by ``= <number>``, ``(<number>``, or a markdown table cell boundary
+# ``| <number>`` (the bwl-config-and-flags constant-table form) — each side
+# optionally wrapped in backticks or bold. A bare name mention
+# ("see ACTOR_MIN_RATIO") is not a claim.
+_ABSENT_CLAIM_RE = re.compile(
+    r"\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b"
+    rf"[`*]{{0,2}}\s*[=(|]\s*[`*]{{0,2}}({_NUMBER})"
+)
+# Historical-mention convention (documented in bwl-docs-and-writing SKILL.md):
+# a line citing a dead constant must say so with one of these words.
+_HISTORICAL_HINT = re.compile(
+    r"removed|replaced|superseded|deprecated|no longer|formerly|legacy"
+    r"|earlier design",
+    re.IGNORECASE,
+)
+# Command/shell lines are not constant claims (env assignments, -c one-liners).
+_ABSENT_SKIP_HINT = re.compile(
+    r"grep|rev-parse|pytest|collect-only|uv run|uvx |python3? -c|export "
+)
+# Env/tooling name shapes that are never detector constants.
+_NON_CONSTANT_NAME = re.compile(
+    r"^(?:UV|GIT|CI|HCOM|ANTHROPIC|CLAUDE|PYTEST|HTTP|AWS)_"
+    r"|_(?:DIR|PATH|HOME|URL|TOKEN|KEY|ENV|FILE)$"
+)
 
 
 def _repo_root(start: Path) -> Path:
@@ -172,6 +219,68 @@ def _source_constants(py_files: list[Path]) -> dict[str, float]:
     return values
 
 
+def _source_constant_names(py_files: list[Path]) -> set[str]:
+    """Every module-level UPPER_SNAKE name assigned in source, any value type.
+
+    This is the existence set for the removed-constant check: numeric constants,
+    string sentinels, tuples and paths all count — a name in this set can at
+    worst carry a wrong value (the value check's job), never be "absent".
+    """
+    names: set[str] = set()
+    for path in py_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = _ANY_CONST_DEF_RE.match(line)
+            if match:
+                names.add(match.group(1))
+    return names
+
+
+def _absent_constant_flags_in_text(
+    text: str, known_names: set[str], label: str
+) -> list[str]:
+    """Flag current-constant claims whose name does not exist in source.
+
+    A claim is suppressed when the line carries the documented historical
+    wording (the mention is *about* the constant being gone), when the line is
+    a command, or when the name is an env/tooling shape.
+    """
+    flags: list[str] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _ABSENT_SKIP_HINT.search(line):
+            continue
+        if _HISTORICAL_HINT.search(line):
+            continue
+        for hit in _ABSENT_CLAIM_RE.finditer(line):
+            name = hit.group(1)
+            if name in known_names or _NON_CONSTANT_NAME.search(name):
+                continue
+            flags.append(
+                f"  ABSENT {label}:{lineno}\n"
+                f"         cites {name} = {hit.group(2)} as current — no such "
+                f"constant in source\n"
+                f"         (historical mentions must say removed/replaced/"
+                f"superseded/deprecated on the line)\n"
+                f"         > {line.strip()[:100]}"
+            )
+    return flags
+
+
+def _absent_constant_flags(
+    skill_files: list[Path], root: Path, known_names: set[str]
+) -> list[str]:
+    """Run the removed-constant check over every skill file."""
+    flags: list[str] = []
+    for skill in skill_files:
+        flags.extend(
+            _absent_constant_flags_in_text(
+                skill.read_text(encoding="utf-8"),
+                known_names,
+                str(skill.relative_to(root)),
+            )
+        )
+    return flags
+
+
 def _constant_flags(
     skill_files: list[Path], root: Path, constants: dict[str, float]
 ) -> list[str]:
@@ -201,6 +310,83 @@ def _constant_flags(
                             f"         > {line.strip()[:100]}"
                         )
     return flags
+
+
+# (fixture line, should_flag, what it proves) — run against the REAL source
+# name set, so the suite also proves ACTOR_MIN_RATIO really is gone from source.
+_SELF_TEST_FIXTURES: tuple[tuple[str, bool, str], ...] = (
+    (
+        "The band is gated by ACTOR_MIN_RATIO = 0.02 on every log.",
+        True,
+        "removed constant cited as current (the incident class)",
+    ),
+    (
+        "| `ACTOR_MAX_RATIO` | `0.5` | upper edge of the actor band |",
+        True,
+        "removed constant cited as current in a config-table row",
+    ),
+    (
+        "the old band (`ACTOR_MIN_RATIO`/`ACTOR_MAX_RATIO`, now **removed**)",
+        False,
+        "historical mention with 'removed' wording is suppressed",
+    ),
+    (
+        "ACTOR_MIN_RATIO = 0.02 was replaced by scale-invariant tests",
+        False,
+        "claim-shaped mention with 'replaced' wording is suppressed",
+    ),
+    (
+        "the hub gate needs MIN_HUB_DEGREE = 3 distinct counterparts",
+        False,
+        "existing source constant is never 'absent'",
+    ),
+    (
+        "see bwl-failure-archaeology for the ACTOR_MIN_RATIO story",
+        False,
+        "bare name mention without a claim form is not a claim",
+    ),
+    (
+        "set UV_CACHE_DIR = 1 to relocate the uv cache",
+        False,
+        "env/tooling name shapes are excluded",
+    ),
+    (
+        "| RULE_WEIGHTS_TOTAL | THRESHOLD | FLAG RATE |",
+        False,
+        "all-caps table headers without a value claim never match",
+    ),
+    (
+        'export FAKE_GONE_CONST=42 && python3 -c "check"',
+        False,
+        "command/shell lines are skipped",
+    ),
+)
+
+
+def _self_test(known_names: set[str]) -> int:
+    """Prove the removed-constant classifier on fixed fixtures; 0 = all pass."""
+    if "ACTOR_MIN_RATIO" in known_names or "ACTOR_MAX_RATIO" in known_names:
+        print(
+            "SELF-TEST ERROR: ACTOR_MIN_RATIO/ACTOR_MAX_RATIO exist in source "
+            "again — these fixtures assume the band stayed removed; update them."
+        )
+        return 1
+    failures = 0
+    for line, should_flag, proves in _SELF_TEST_FIXTURES:
+        flagged = bool(_absent_constant_flags_in_text(line, known_names, "fixture"))
+        status = "PASS" if flagged == should_flag else "FAIL"
+        if flagged != should_flag:
+            failures += 1
+        expected = "flag" if should_flag else "no flag"
+        print(f"  {status}  [{expected:>7}] {proves}")
+        if flagged != should_flag:
+            print(f"        > {line}")
+    print()
+    if failures:
+        print(f"SELF-TEST VERDICT: {failures} fixture(s) failed.")
+        return 1
+    print(f"SELF-TEST VERDICT: all {len(_SELF_TEST_FIXTURES)} fixtures pass.")
+    return 0
 
 
 def _git_ok(root: Path) -> bool:
@@ -250,6 +436,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-commit", action="store_true", help="skip the HEAD provenance check"
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run the built-in removed-constant fixtures and exit",
+    )
     args = parser.parse_args(argv)
 
     root = _repo_root(Path(__file__).resolve())
@@ -274,6 +465,10 @@ def main(argv: list[str] | None = None) -> int:
     # Source-of-truth constant values (bots_without_labels/ + evaluation/).
     py_files = sorted(f for d in source_dirs for f in d.glob("*.py"))
     constants = _source_constants(py_files)
+    known_names = _source_constant_names(py_files)
+
+    if args.self_test:
+        return _self_test(known_names)
 
     if not args.quiet:
         print(f"repo: {root}")
@@ -300,7 +495,10 @@ def main(argv: list[str] | None = None) -> int:
     # 4. Constant citations vs source.
     const_flags = _constant_flags(skill_files, root, constants)
 
-    # 5. Every commit hash cited in a Provenance section must be a real
+    # 5. Current-constant claims whose name no longer exists in source.
+    absent_flags = _absent_constant_flags(skill_files, root, known_names)
+
+    # 6. Every commit hash cited in a Provenance section must be a real
     #    ancestor of HEAD (catches typos, fabricated hashes, unmerged refs).
     stamp_flags: list[str] = []
     git_available = not args.no_commit and _git_ok(root)
@@ -336,20 +534,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"CONSTANT DRIFT ({len(const_flags)}):")
         print("\n".join(const_flags))
         print()
+    if absent_flags:
+        print(f"REMOVED-CONSTANT CITATIONS ({len(absent_flags)}):")
+        print("\n".join(absent_flags))
+        print()
     if stamp_flags:
         print(f"UNKNOWN PROVENANCE COMMITS ({len(stamp_flags)}):")
         print("\n".join(stamp_flags))
         print()
 
-    if triple_flags or const_flags or stamp_flags:
+    if triple_flags or const_flags or absent_flags or stamp_flags:
         print(
             "VERDICT: drift found — reconcile each flag against the docs of record "
-            "(metrics), source (constants), or git history (provenance)."
+            "(metrics), source (constants: wrong value or removed name), or git "
+            "history (provenance)."
         )
         return 1
     print(
-        "VERDICT: clean — skill metrics match the docs, constants match source, "
-        "provenance commits are real."
+        "VERDICT: clean — skill metrics match the docs, constants match source "
+        "(values and existence), provenance commits are real."
     )
     return 0
 
