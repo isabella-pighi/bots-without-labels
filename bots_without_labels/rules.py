@@ -243,13 +243,13 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
 
     # The relational hub discriminator is only meaningful when at least two stable
     # entity columns exist, so edges (entity -> counterpart) can be formed. With
-    # one (or no) entity column there is no source/destination structure to read,
-    # and the rule falls back to firing on monotony alone.
+    # one (or no) entity column there is no entity-graph structure to read, and
+    # the rule falls back to monotony -- hub-gated through the ACTOR graph where
+    # that supplies counterpart degrees (below), bare only where it cannot.
     entity_graph_active = len(context.entity_columns) >= 2 and bool(
         context.entity_degree_by_col
     )
     thresholds["entity_graph_active"] = entity_graph_active
-    thresholds["min_hub_degree"] = MIN_HUB_DEGREE if entity_graph_active else None
     entity_value_arrays = {
         col: frame[col].astype("string").fillna("").to_numpy()
         for col in context.entity_columns
@@ -269,6 +269,25 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
         col: frame[col].astype("string").fillna("").to_numpy()
         for col in context.actor_columns
     }
+
+    # With exactly ONE entity column the entity graph cannot form edges (every
+    # entity's counterpart degree is structurally 0), so monotony used to fire on
+    # low diversity alone -- and on real captures that flooded benign monotone
+    # point-to-point channels, the very class the hub gate exists to exclude.
+    # When the relational actor graph covers that column, its counterpart degrees
+    # supply the same hub structure, so the structural hub minimum is re-applied.
+    # The bare fallback survives only where no counterpart structure is derivable
+    # (a genuinely low-dimensional log).
+    entity_fallback_degrees = None
+    if not entity_graph_active and len(context.entity_columns) == 1:
+        entity_fallback_degrees = context.actor_degree_by_col.get(
+            context.entity_columns[0]
+        )
+    entity_fallback_hub_gated = entity_fallback_degrees is not None
+    thresholds["entity_fallback_hub_gated"] = entity_fallback_hub_gated
+    thresholds["min_hub_degree"] = (
+        MIN_HUB_DEGREE if (entity_graph_active or entity_fallback_hub_gated) else None
+    )
 
     entropy = _entropy_lookup(feature_set)
     lengths = {
@@ -417,14 +436,26 @@ def apply_rules(frame, schema: Schema, feature_set: FeatureSet) -> RulesResult:
             elif (
                 context.entity_volume[row] >= ENTITY_MIN_EVENTS
                 and context.entity_diversity[row] <= entity_cut
+                and (
+                    entity_fallback_degrees is None
+                    or entity_fallback_degrees[row] >= MIN_HUB_DEGREE
+                )
             ):
+                detail = (
+                    f"entity repeats near-identical events "
+                    f"(diversity {context.entity_diversity[row]:.2f} over "
+                    f"{int(context.entity_volume[row])} events)"
+                )
+                if entity_fallback_degrees is not None:
+                    detail += (
+                        f" while converging with "
+                        f"{int(entity_fallback_degrees[row])} distinct counterparts"
+                    )
                 row_hits.append(
                     _hit(
                         "entity_monotony",
                         "low-diversity high-volume entity",
-                        f"entity repeats near-identical events "
-                        f"(diversity {context.entity_diversity[row]:.2f} over "
-                        f"{int(context.entity_volume[row])} events)",
+                        detail,
                         W_ENTITY_MONOTONY,
                         STRONG,
                         "entity",

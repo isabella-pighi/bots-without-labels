@@ -141,11 +141,80 @@ def test_entity_monotony_falls_back_without_relational_structure(
 
     assert result.thresholds["entity_graph_active"] is False
     assert result.thresholds["min_hub_degree"] is None
+    # No actor graph covers the single entity column, so the fallback stays
+    # bare (no counterpart structure is derivable from this log).
+    assert result.thresholds["entity_fallback_hub_gated"] is False
 
     actor = log.frame["actor"].astype(str).to_numpy()
     bot_rows = np.where(actor == bot)[0]
     assert _fired(result, "entity_monotony", bot_rows).all()
     assert (result.scores[bot_rows] >= HEURISTIC_CUTOFF).all()
+
+
+def test_fallback_hub_gate_uses_actor_degrees_when_derivable(
+    tmp_path: Path,
+) -> None:
+    """With ONE entity column but an active actor graph covering it, the
+    monotony fallback re-applies the structural hub gate through actor
+    counterpart degrees: a monotone point-to-point channel (degree below
+    MIN_HUB_DEGREE) no longer fires, while an equally monotone hub entity
+    (converging from several distinct sources) still does."""
+
+    rows = ["src,dst,action,size"]
+    # Monotone point-to-point channel: one src <-> one dst (counterpart degree 1).
+    for _ in range(15):
+        rows.append("10.0.1.1,10.0.1.2,sync,7")
+    # Monotone hub: one dst converging from 4 distinct sources (degree 4),
+    # dominated by one source so its behaviour stays low-diversity.
+    for _ in range(17):
+        rows.append("172.16.0.1,10.9.9.9,beacon,1")
+    for k in (2, 3, 4):
+        rows.append(f"172.16.0.{k},10.9.9.9,beacon,1")
+    # Busy diverse destinations: qualified volume, varied behaviour. Sources
+    # are drawn from a small busy pool so `src` passes the actor repeat-mass
+    # test while its median value stays a one-off -- `src` must be an actor
+    # endpoint but NOT an entity column, or the entity graph itself activates.
+    actions = ["get", "post", "put", "del"]
+    for i in range(20):
+        for j in range(12):
+            rows.append(
+                f"10.5.0.{j % 8},10.0.2.{i},{actions[(i + j) % 4]},{(i * 7 + j) % 9}"
+            )
+    for i in range(10):
+        for j in range(13):
+            rows.append(f"10.6.{i}.{j},10.0.3.{i},{actions[j % 2]},{j % 3}")
+    # Low-volume tail so the dst distinct count clears the actor minimum.
+    for i in range(25):
+        rows.append(f"10.7.{i}.1,10.0.4.{i},{actions[i % 4]},{i % 9}")
+        rows.append(f"10.7.{i}.2,10.0.4.{i},{actions[(i + 1) % 4]},{(i + 3) % 9}")
+    path = tmp_path / "fallback_hub.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    log = load(path)
+    feature_set = build_features(log.frame, log.schema)
+    result = apply_rules(log.frame, log.schema, feature_set)
+
+    # Regime under test: exactly one entity column, actor graph active over it.
+    assert result.thresholds["entity_columns"] == ["dst"]
+    assert result.thresholds["entity_graph_active"] is False
+    assert result.thresholds["entity_fallback_hub_gated"] is True
+    assert result.thresholds["min_hub_degree"] == 3
+    assert "dst" in result.thresholds["actor_columns"]
+
+    dst = log.frame["dst"].astype(str).to_numpy()
+    hub_rows = np.where(dst == "10.9.9.9")[0]
+    assert _fired(result, "entity_monotony", hub_rows).all()
+    assert (result.scores[hub_rows] >= HEURISTIC_CUTOFF).all()
+    hub_reason = next(
+        hit.reason
+        for hit in result.hits[hub_rows[0]]
+        if hit.rule_id == "entity_monotony"
+    )
+    assert "counterpart" in hub_reason  # the explanation cites the convergence
+
+    channel_rows = np.where(dst == "10.0.1.2")[0]
+    assert not _fired(result, "entity_monotony", channel_rows).any()
+    assert (result.scores[channel_rows] < HEURISTIC_CUTOFF).all()
 
 
 def _timing_result(tmp_path: Path, timestamps: list[str], name: str):

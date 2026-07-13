@@ -468,18 +468,21 @@ family is a coverage fact, not a regression.
 |---|---|---|---|---|---|---|---|
 | `cicids_portscan` | Friday afternoon | 2,000 of 158,930 (contiguous slice) | 62,000 | 0.032 | 0.055 | 1.000 | 0.585 |
 | `cicids_ddos` | Friday afternoon | 2,000 of 128,027 (contiguous slice) | 62,000 | 0.032 | 0.041 | 1.000 | 0.786 |
-| `cicids_webattacks` | Thursday morning | all 2,180 (brute force 1,507 + XSS 652 + SQLi 21) | 62,180 | 0.035 | 0.158 | **0.000** | **0.000** |
-| `cicids_infiltration` | Thursday afternoon | all 36 that exist | 60,036 | 0.001 | 0.131 | 0.472 | 0.002 |
-| `cicids_bruteforce` | Tuesday | 2,000 (slice entirely SSH-Patator) | 62,000 | 0.032 | 0.192 | 1.000 | 0.168 |
-| `cicids_dos` | Wednesday | 2,000 (slowloris 1,989 + Heartbleed 11) | 62,000 | 0.032 | 0.160 | 0.040 | **0.008** |
+| `cicids_webattacks` | Thursday morning | all 2,180 (brute force 1,507 + XSS 652 + SQLi 21) | 62,180 | 0.035 | 0.005 | **0.000** | **0.000** |
+| `cicids_infiltration` | Thursday afternoon | all 36 that exist | 60,036 | 0.001 | 0.005 | 0.472 | 0.053 |
+| `cicids_bruteforce` | Tuesday | 2,000 (slice entirely SSH-Patator) | 62,000 | 0.032 | 0.054 | 1.000 | 0.600 |
+| `cicids_dos` | Wednesday | 2,000 (slowloris 1,989 + Heartbleed 11) | 62,000 | 0.032 | 0.028 | **0.040** | 0.046 |
 
 Measured with the same gitignored `data/GeneratedLabelledFlows.zip` as the Ares
 benchmark, through the shared harness (seed 7, 60,000 sampled benign background,
 positives = each family's configured labelled non-benign slice — large families
 cut to a contiguous 2,000-row slice, small families kept whole, per the table —
-label held out before scoring). **No detector threshold, weight, or rule was
-changed for these runs**, and the weak results below are preserved as measured,
-not tuned away.
+label held out before scoring). These are the **current** figures and include the
+follow-up L **fallback hub gate** — a **detector-behaviour change**, not a
+benchmark edit; the probe definitions, mixes and seeds are unchanged since
+follow-up F, and the pre-gate figures are kept in the stage history below. No
+rule weight, cutoff, ML scoring or benchmark definition changed alongside the
+gate, and the weak results below are preserved as measured, not tuned away.
 
 **Mix caveats — read these before the numbers.** Every family slice is a single
 NATed source→destination IP channel (CICIDS routes all attacks through
@@ -510,39 +513,82 @@ regimes**, decided by how many entity columns the file qualifies.
   (DDoS) per the diagnostic. That is what lifts recall to 1.000 at moderate flag
   rates.
 - **One entity column (Tuesday/Wednesday/Thursday files: BruteForce, DoS,
-  WebAttacks, Infiltration).** Only `Destination IP` qualifies, the entity graph is
-  inactive, and the **ungated single-entity-column low-diversity fallback** fires on
-  7,500–9,600 benign rows per mix at fire precision 0.000–0.175 — the 13–19% flag
-  rates. It catches the BruteForce burst (a ~21-minute single-channel SSH-Patator
-  run, hence recall 1.000 at precision 0.168) but misses WebAttacks and DoS
-  entirely: the victim web server's entity shows high behavioural diversity.
+  WebAttacks, Infiltration).** Only `Destination IP` qualifies and the entity graph
+  is inactive. As first measured (follow-up F), the single-entity-column
+  low-diversity fallback ran **ungated** here and fired on 7,500–9,600 benign rows
+  per mix at fire precision 0.000–0.175 — 13–19% flag rates. It caught the
+  BruteForce burst (a ~21-minute single-channel SSH-Patator run: recall 1.000 at
+  precision 0.168) but missed WebAttacks and DoS entirely: the victim web server's
+  entity shows high behavioural diversity.
 
 Dense-timing rules are gated off everywhere (60 s grid) and `asymmetric_degree` is
 dormant everywhere (no IP fan-out), both as predicted. ML-only flags stayed within
 the 2% cap on every mix (211–457 rows).
 
+### The fallback hub gate (follow-up L) — stage history
+
+Evidence-first attribution of the fallback regime (TODO follow-up L, Phase 1)
+showed the flood and the recall sat on *different* entity shapes: every flooded
+fire was a point-to-point monotone channel (counterpart degree < 3) — exactly the
+class the shipped hub gate exists to exclude — while every recall-carrying
+BruteForce fire was hub-shaped and would pass that gate. The Phase 2 change makes
+`entity_monotony` re-apply the **existing structural hub gate**
+(`MIN_HUB_DEGREE = 3`) inside the fallback regime, sourcing the entity's
+counterpart degree from the relational actor graph when the entity column is a
+covered actor endpoint; the bare fallback survives only where no counterpart
+structure is derivable (the genuine low-dimensional case). No new constants, no
+distinct/row-count ratios, and no rule weight, cutoff or ML scoring change.
+
+| Probe | Ungated fallback (follow-up F) | Hub-gated fallback (current) |
+|---|---|---|
+| `cicids_bruteforce` | 1.000 / 0.168 / 0.192 | 1.000 / **0.600** / 0.054 — recall held |
+| `cicids_webattacks` | 0.000 / 0.000 / 0.158 | 0.000 / 0.000 / **0.005** — flood removed, recall still zero |
+| `cicids_infiltration` | 0.472 / 0.002 / 0.131 | 0.472 / 0.053 / 0.005 |
+| `cicids_dos` | 0.040 / 0.008 / 0.160 | 0.040 / 0.046 / 0.028 — still weak |
+
+*(recall / precision / flag rate.)* Directional predictions from Phase 1's offline
+counterfactuals were recorded **before** implementation; the verified pipeline
+re-runs above matched them at displayed precision, and the ML review independently
+re-ran the full registry. The seven rows outside the fallback regime — Ares
+(0.998/0.879/0.036), CTU-13 sc1 (1.000/0.971/0.033), CTU-13 sc3
+(0.985/0.932/0.034), UNSW (1.000/0.519/0.062), Bournemouth (0.873/0.028/0.918),
+PortScan (1.000/0.585/0.055) and DDoS (1.000/0.786/0.041) — did not move: the
+gated code path never executes there. Validation: full suite 94 passed,
+`tests/test_rules.py` 16 passed, pylint 10.00/10, `black --check` clean,
+`git diff --check` clean, complete registry runs.
+
 ### The negative results, stated plainly
 
 - **WebAttacks: recall 0.000, precision 0.000.** Low-volume, human-paced web
-  attacks over one channel are invisible to this method on this mix — and the
-  fallback still flags 15.8% of the rows, all of them wrong.
-- **DoS: precision 0.008, below the 0.032 base rate.** On this mix a flagged row is
-  *less* likely to be an attack than a randomly chosen one — worse than chance.
-- **Infiltration: precision 0.002 on 36 positives.** Near-zero precision; with a
-  ~0.001 base rate the precision is mechanically capped near zero even at perfect
-  recall, and 36 positives cannot support statistically robust digits either way.
+  attacks over one channel are invisible to this method on this mix. The hub gate
+  removed the fallback's false-positive flood (flag 0.158 → 0.005), but coverage
+  is unchanged: nothing real is caught.
+- **DoS: recall 0.040, precision 0.046.** The gate lifted precision from 0.008
+  (which sat *below* the 0.032 base rate — worse than chance) to 0.046, barely
+  above base — but recall is still 0.040, so coverage is effectively absent.
+  Slowloris is a single point-to-point channel, which this detector by design does
+  not read as automation.
+- **Infiltration: precision 0.053 on 36 positives.** Up from 0.002, but with a
+  ~0.001 base rate and only 36 labelled flows the digits remain qualitative
+  signal only.
 
 These are first-class results: they show what "attack coverage" honestly looks like
 when a who-talks-to-whom detector is pointed at attack shapes it was never built
-for.
+for. The hub gate removed false positives; it did not, and was not expected to,
+create coverage where none existed.
 
-### Proposed follow-up (out of scope here — an engine decision)
+### Residuals (follow-up L)
 
-The ungated single-entity-column monotony fallback drives all three weak probes'
-13–19% flag rates and the at-or-below-chance precisions on WebAttacks and DoS.
-Whether to gate or calibrate that fallback is an **engine decision**, deliberately
-not taken in this measurement-only pass — recorded as TODO follow-up L, pending an
-owner decision.
+- **Benign hub-shaped fires survive by design.** The hub gate accepts hub-shaped
+  entities, benign or not — DoS keeps 1,248 benign hub fires, the same acceptance
+  the shipped hub gate has always had (cf. Ares).
+- **The genuinely unpaired fallback** (one entity column with no derivable actor
+  counterpart) stays ungated by design; it has unit-fixture coverage
+  (`tests/test_rules.py`) but **no real registry row exercises it**.
+- **DoS coverage remains a method question**, out of scope for the gate.
+- These probes remain **secondary attack-coverage measurements** — the movement
+  above is a false-positive fix verified on this one archive, not bot-detection
+  validation and not a production-precision claim.
 
 ### Reproduce
 

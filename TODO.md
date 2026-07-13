@@ -76,7 +76,8 @@ with predictions recorded before measurement and surprises attributed via
 three first-class weak results — WebAttacks recall 0.000, DoS precision 0.008
 (below the 0.032 base rate), Infiltration precision 0.002 on 36 positives. These
 are attack-coverage measurements, not bot-detection results. The over-firing
-single-entity-column monotony fallback they exposed is follow-up L.
+single-entity-column monotony fallback they exposed is follow-up L (whose fix has
+since moved the fallback-row numbers — see L below for the before/after).
 
 ### G. Route direct-to-main engine commits through HCOM Codex review (process)
 
@@ -161,7 +162,22 @@ predict–attribute–verify loop and cross-model review. It was deliberately no
 touched in the measurement-only follow-up F pass; evidence in
 `evaluation/FINDINGS.md`, "Attack-family coverage: the rest of CICIDS2017".
 
-*Status: not started — pending an owner decision on whether to open the engine work.*
+*Status: implemented and reviewed (2026-07-13) — awaiting human owner merge
+approval; not yet landed.* The two-phase, evidence-first arc ran to completion:
+Phase 1 attributed every fallback fire (floods are point-to-point channels, the
+BruteForce recall sits entirely on hub-shaped entities) and Phase 2 re-applies the
+existing structural hub gate (`MIN_HUB_DEGREE = 3`) inside the fallback regime via
+actor-derived counterpart degree, keeping the bare fallback where no counterpart
+structure is derivable (`bots_without_labels/rules.py` + tests only, branch
+`agent/followup-l-phase2-fallback-hub-gate`, ML review approved with no blockers).
+Predictions recorded before implementation matched the verified re-runs at
+displayed precision: BruteForce precision 0.168 → 0.600 with recall held 1.000,
+WebAttacks flag 0.158 → 0.005 (recall still 0.000), Infiltration precision
+0.002 → 0.053, DoS precision 0.008 → 0.046 at flag 0.160 → 0.028 (still weak); all
+seven non-fallback registry rows unchanged. Because the change moves flag
+decisions, landing is held for explicit human owner approval. Full story in
+`evaluation/FINDINGS.md`, "The fallback hub gate"; before/after registry detail in
+`evaluation/BENCHMARKS.md`.
 
 ## P1: Core Promise
 

@@ -882,13 +882,96 @@ The honest ceiling: these are six slices of **one archive** with a minute-quanti
 AM/PM-less clock, so the contiguous slices are parse-order windows with partial
 subfamily coverage (BruteForce = SSH-Patator only; DoS = slowloris + Heartbleed
 only), and none of the numbers says anything about bot detection or transfers beyond
-CICIDS2017. The one actionable discovery is the **ungated single-entity-column
-monotony fallback**: it drives every weak probe's flag rate and both
-at-or-below-chance precisions. Whether to gate or calibrate it is an engine decision
-with regression risk to captures where the fallback carries recall, so it was
-deliberately left untouched in this measurement-only pass and recorded as TODO
-follow-up L. Registry rows, mix caveats and reproduce commands live in
-`evaluation/BENCHMARKS.md`, "CICIDS2017 attack-family coverage probes".
+CICIDS2017. The one actionable discovery was the **ungated single-entity-column
+monotony fallback**: it drove every weak probe's flag rate and both
+at-or-below-chance precisions. Whether to gate or calibrate it was an engine
+decision with regression risk to captures where the fallback carries recall, so it
+was deliberately left untouched in that measurement-only pass and recorded as TODO
+follow-up L — taken up, evidence-first, in the next section. Registry rows, mix
+caveats and reproduce commands live in `evaluation/BENCHMARKS.md`, "CICIDS2017
+attack-family coverage probes".
+
+## The fallback hub gate: closing follow-up L without losing the recall it carried
+
+Follow-up F left a precise question: the single-entity-column monotony fallback
+flooded 13–19% of four CICIDS mixes with false positives, yet the same fallback was
+the *only* thing catching the BruteForce burst (recall 1.000). Kill it and you lose
+real recall; keep it and two probes score at or below chance. This is a
+**detector-behaviour change** — it moves flag decisions — so it ran as a two-phase,
+evidence-first arc with cross-model review at each step.
+
+### Phase 1: attribute before touching anything
+
+A read-only diagnostic pass (no engine edits) classified every registry mix by
+regime and attributed the fallback's fires row by row, with each fired entity's
+counterpart degree computed offline from the actor columns:
+
+- The fallback executes on exactly four mixes (`cicids_webattacks`,
+  `cicids_infiltration`, `cicids_bruteforce`, `cicids_dos`). Everywhere else it is
+  structurally impossible (entity graph active) or dormant (no entity columns) —
+  so the seven other registry rows cannot move, testably.
+- **Every flooded fire was a point-to-point monotone channel** (counterpart
+  degree < 3): WebAttacks 9,607/9,607 false fires point-to-point, Infiltration
+  7,624/7,624, DoS 8,313 of 9,561. That is precisely the class the shipped
+  relational hub gate exists to exclude.
+- **Every recall-carrying fire was hub-shaped**: all 2,000 BruteForce true
+  positives sat on entities with counterpart degree ≥ 3 and would pass a hub gate.
+
+One mechanism, no second explanation needed: the fallback regime *is* the hub
+gate's absence. Four candidate designs were assessed against the recorded failure
+archaeology; the chosen one (re-apply the existing gate) was the only candidate
+that removed the flood without touching the recall, without new constants, and
+without the prohibited distinct/row-count ratio class. Killing the fallback
+outright was rejected because it demonstrably costs the 2,000 BruteForce true
+positives; a flag-mass cap was rejected as hiding the flood rather than removing
+its cause.
+
+### Phase 2: predict, implement, verify
+
+Numeric predictions for all eleven registry rows were recorded **before**
+implementation — seven rows predicted bit-identical (the gated path never executes
+there; any movement at all would be an implementation bug, not jitter), four
+fallback rows projected from the Phase 1 offline counterfactuals, with the explicit
+stop condition that *any* BruteForce recall loss halts the work.
+
+The implementation gates the fallback with the **existing** structural hub gate
+(`MIN_HUB_DEGREE = 3`), sourcing counterpart degree from the relational actor
+graph when the single entity column is a covered actor endpoint, and preserving
+the bare fallback where no counterpart structure is derivable. `rules.py` and its
+tests are the only files touched; no rule weight, cutoff, ML scoring or benchmark
+definition changed.
+
+Verified end-to-end (full registry re-runs, independently repeated by the ML
+review), against prediction (recall / precision / flag rate):
+
+| Probe | Before | After | Prediction |
+|---|---|---|---|
+| `cicids_bruteforce` | 1.000 / 0.168 / 0.192 | 1.000 / 0.600 / 0.054 | matched; recall held |
+| `cicids_webattacks` | 0.000 / 0.000 / 0.158 | 0.000 / 0.000 / 0.005 | matched |
+| `cicids_infiltration` | 0.472 / 0.002 / 0.131 | 0.472 / 0.053 / 0.005 | matched |
+| `cicids_dos` | 0.040 / 0.008 / 0.160 | 0.040 / 0.046 / 0.028 | matched |
+
+Zero prediction surprises at displayed precision. The seven protected rows —
+Ares 0.998/0.879/0.036, CTU-13 sc1 1.000/0.971/0.033, CTU-13 sc3 0.985/0.932/0.034,
+UNSW 1.000/0.519/0.062, Bournemouth 0.873/0.028/0.918, PortScan 1.000/0.585/0.055,
+DDoS 1.000/0.786/0.041 — did not move. Validation: full suite 94 passed,
+`tests/test_rules.py` 16 passed, pylint 10.00/10, `black --check` clean,
+`git diff --check` clean.
+
+### The honest ceiling (fallback hub gate)
+
+- **This is a false-positive fix, not new coverage.** WebAttacks recall stays
+  0.000 and DoS recall stays 0.040 — the gate removed floods, it caught nothing
+  new, and DoS remains weak (precision 0.046, barely above the 0.032 base rate).
+- **Benign hub-shaped fires survive by design** — DoS keeps 1,248 of them; that is
+  the hub gate's inherent acceptance, unchanged from Ares.
+- **The genuinely unpaired fallback regime** (one entity column, no derivable
+  actor counterpart) stays ungated by design and is covered only by unit fixtures —
+  no real registry row exercises it.
+- **Protected-row equality was verified at benchmark-table precision** and via the
+  existing regression guards, not by a per-row decision-vector diff.
+- The moved numbers are **secondary attack-coverage measurements on one archive**;
+  nothing here is bot-detection validation or a production-precision claim.
 
 ## Takeaway
 
