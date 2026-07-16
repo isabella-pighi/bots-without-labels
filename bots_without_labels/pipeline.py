@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import history
 from .anomaly import TOP_DEVIATION_FEATURES, feature_deviations, score_matrix
 from .atomic import atomic_path_writer, atomic_text_writer
 from .features import FeatureSet, build_features
@@ -256,6 +257,8 @@ def run_pipeline(
         "ml_flag_rate": (
             float((result.ml_scores > result.ml_threshold).mean()) if n_rows else 0.0
         ),
+        "heuristic_score_quantiles": history.score_quantiles(result.heuristic),
+        "ml_score_quantiles": history.score_quantiles(result.ml_scores),
         "evidence_tier_counts": {
             "tier_1_both": int((result.evidence_tier == 1).sum()),
             "tier_2_heuristic_only": int((result.evidence_tier == 2).sum()),
@@ -268,6 +271,19 @@ def run_pipeline(
         "rule_thresholds": result.rules_result.thresholds,
         "top_reasons": reason_counter.most_common(10),
     }
+
+    # Drift awareness (roadmap item 7): strictly decision-neutral — computed
+    # from the finished result AFTER every detection decision is made, and
+    # nothing read from the history feeds back into detection.
+    rule_fires = Counter(hit.rule_id for row in result.rules_result.hits for hit in row)
+    history_path = artifacts / history.HISTORY_FILENAME
+    records, history_warning = history.read_history(history_path)
+    record = history.build_record(summary, rule_fires)
+    drift = history.assess_drift(records[-1] if records else None, record)
+    if history_warning:
+        drift["warnings"] = [history_warning, *drift["warnings"]]
+    summary["drift"] = drift
+    history.append_record(history_path, record, records)
 
     _write_predictions(root / "predictions.tsv", id_name, ids, result.is_bot)
     _write_extended(root / "predictions-extended.tsv", id_name, ids, result, reasons)
@@ -424,3 +440,9 @@ def _log_summary(summary: dict[str, object]) -> None:
         f"ml_threshold={summary['ml_threshold']:.6f} "
         f"({summary['ml_threshold_method']}); backend={summary['ml_backend']}"
     )
+    drift = summary.get("drift")
+    if isinstance(drift, dict) and drift.get("warnings"):
+        # Operational warnings only (see the history module header): they flag
+        # a sharp run-to-run shift for inspection and never change decisions.
+        for warning in drift["warnings"]:
+            print(f"Drift warning: {warning}")
