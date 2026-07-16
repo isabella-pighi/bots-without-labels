@@ -158,11 +158,14 @@ BENCHMARKS: tuple[Benchmark, ...] = (
         caveat=(
             "web-log DOMAIN-TRANSFER check (HTTP access logs, not NetFlow), "
             "clean folder labels. NEGATIVE transfer: precision ~0.02 is BELOW "
-            "the ~0.03 base rate. Session entity + actor graph are DORMANT "
-            "(web session-id ratio ~0.005 falls below the actor band), so only "
-            "timing+ML run and timing over-fires on dense page-load bursts. A "
-            "real domain limit, not tuned. Licence: research-use, not formally "
-            "specified -- numbers internal pending confirmation."
+            "the ~0.03 base rate. The raw request-path column is demoted from "
+            "actor selection by value grammar (follow-up I-b), so the actor "
+            "graph no longer fires; session_id is the sole entity column, "
+            "entity_monotony runs the bare single-column fallback and fires "
+            "on monotone human sessions, and timing over-fires on dense "
+            "page-load bursts. A real domain limit, not tuned. Licence: "
+            "research-use, not formally specified -- numbers internal pending "
+            "confirmation."
         ),
     ),
 ) + _cicids_family_rows()

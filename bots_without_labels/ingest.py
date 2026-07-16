@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -112,6 +113,15 @@ class ColumnSchema:
         datetime_format: The matched strptime format for timestamp columns, if a
             known one applied.
         numeric_subtype: ``"int"`` or ``"float"`` for numeric columns.
+        entity_override: True when the user explicitly declared this column an
+            actor/entity column (``--entity-column``). The column is treated as
+            categorical and the *identity-shape* actor tests (vocabulary shape,
+            content grammar) are bypassed for it; the volume/recurrence floors
+            still apply, because they guard the statistical validity of the
+            adaptive thresholds rather than guessing identity.
+        content_override: True when the user explicitly declared this column
+            content (``--content-column``); it is excluded from actor/entity
+            selection like a URL column.
     """
 
     name: str
@@ -123,6 +133,8 @@ class ColumnSchema:
     derived_from: str | None = None
     datetime_format: str | None = None
     numeric_subtype: str | None = None
+    entity_override: bool = False
+    content_override: bool = False
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable representation of the column schema."""
@@ -137,6 +149,8 @@ class ColumnSchema:
             "derived_from": self.derived_from,
             "datetime_format": self.datetime_format,
             "numeric_subtype": self.numeric_subtype,
+            "entity_override": self.entity_override,
+            "content_override": self.content_override,
         }
 
 
@@ -230,7 +244,13 @@ class LoadedLog:
 # --- Public API --------------------------------------------------------------
 
 
-def load(path: str | Path, *, expand_urls: bool = True) -> LoadedLog:
+def load(
+    path: str | Path,
+    *,
+    expand_urls: bool = True,
+    entity_columns: Sequence[str] = (),
+    content_columns: Sequence[str] = (),
+) -> LoadedLog:
     """Load any supported log into a typed table with an inferred schema.
 
     Args:
@@ -240,13 +260,24 @@ def load(path: str | Path, *, expand_urls: bool = True) -> LoadedLog:
         expand_urls: When true, detected URL columns have their query string
             expanded into new ``<column>__<param>`` columns (plus
             ``<column>__path``) before schema inference.
+        entity_columns: Explicit, default-off schema override: column names the
+            user declares to be actor/entity columns (an integer-coded session
+            id, a short-username pool). Each named column is coerced to the
+            categorical role and marked ``entity_override`` so the actor/entity
+            machinery considers it without the identity-shape inference tests.
+        content_columns: Explicit, default-off schema override: column names
+            the user declares to be content (a raw request path); each is
+            marked ``content_override`` and excluded from actor/entity
+            selection.
 
     Returns:
         A :class:`LoadedLog`.
 
     Raises:
         FileNotFoundError: If ``path`` does not exist.
-        ValueError: If the file is empty or cannot be parsed.
+        ValueError: If the file is empty or cannot be parsed, if an override
+            names a column that does not exist, or if the same column is named
+            in both overrides.
     """
 
     file_path = Path(path).expanduser()
@@ -261,7 +292,13 @@ def load(path: str | Path, *, expand_urls: bool = True) -> LoadedLog:
     if expand_urls:
         derived = _expand_url_columns(raw)
 
-    schema = infer_schema(raw, source_format=source_format, derived=derived)
+    schema = infer_schema(
+        raw,
+        source_format=source_format,
+        derived=derived,
+        entity_columns=entity_columns,
+        content_columns=content_columns,
+    )
     typed = _typed_frame(raw, schema)
     return LoadedLog(frame=typed, schema=schema, path=str(file_path))
 
@@ -304,6 +341,8 @@ def infer_schema(
     *,
     source_format: str = "csv",
     derived: dict[str, str] | None = None,
+    entity_columns: Sequence[str] = (),
+    content_columns: Sequence[str] = (),
 ) -> Schema:
     """Classify each column of an all-string frame into a :class:`Role`.
 
@@ -313,9 +352,17 @@ def infer_schema(
         source_format: The detected source format, recorded on the schema.
         derived: Optional mapping of ``derived_column -> source_url_column`` for
             URL-expanded columns.
+        entity_columns: Explicit user override — see :func:`load`. Applied
+            before the primary timestamp / row id are picked, so a coerced
+            column can never simultaneously hold those posts.
+        content_columns: Explicit user override — see :func:`load`.
 
     Returns:
         The inferred :class:`Schema`.
+
+    Raises:
+        ValueError: If an override names an unknown column or the same column
+            appears in both overrides.
     """
 
     derived = derived or {}
@@ -323,6 +370,7 @@ def infer_schema(
         _classify_column(name, raw[name], derived_from=derived.get(name))
         for name in raw.columns
     ]
+    _apply_overrides(columns, entity_columns, content_columns)
     schema = Schema(
         columns=columns,
         n_rows=int(raw.shape[0]),
@@ -332,6 +380,49 @@ def infer_schema(
     schema.primary_timestamp = _pick_primary_timestamp(columns)
     schema.row_id = _pick_row_id(columns)
     return schema
+
+
+def _apply_overrides(
+    columns: list[ColumnSchema],
+    entity_columns: Sequence[str],
+    content_columns: Sequence[str],
+) -> None:
+    """Mark explicit user schema overrides on ``columns``, in place.
+
+    Default-off: with both sequences empty (the default everywhere) this is a
+    no-op and behaviour is identical to inference alone. An entity override
+    coerces the column to the categorical role so the typed frame keeps its raw
+    string values and the standard categorical/entity/actor machinery sees it;
+    identity-shape tests are bypassed downstream via the ``entity_override``
+    mark (see ``features._entity_columns`` / ``_actor_endpoint_columns``).
+    A content override only marks the column; exclusion happens in
+    ``features._is_content_column``.
+    """
+
+    overlap = set(entity_columns) & set(content_columns)
+    if overlap:
+        raise ValueError(
+            "Columns named as both entity and content overrides: "
+            + ", ".join(sorted(overlap))
+        )
+    by_name = {col.name: col for col in columns}
+    for kind, names in (("entity", entity_columns), ("content", content_columns)):
+        unknown = [name for name in names if name not in by_name]
+        if unknown:
+            raise ValueError(
+                f"Unknown {kind}-column override(s): "
+                + ", ".join(sorted(unknown))
+                + f" (available: {', '.join(sorted(by_name))})"
+            )
+    for name in entity_columns:
+        col = by_name[name]
+        col.entity_override = True
+        if col.role != Role.CATEGORICAL:
+            col.role = Role.CATEGORICAL
+            col.datetime_format = None
+            col.numeric_subtype = None
+    for name in content_columns:
+        by_name[name].content_override = True
 
 
 # --- Format detection & reading ---------------------------------------------

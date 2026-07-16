@@ -46,7 +46,7 @@ comparable, like-for-like, with the bot-specific rows.
 | **CTU-13 scenario 1 (Neris)** | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows (60,000 sampled benign + 2,000 bot) | Yes — directional `Label`; `From-Botnet` = positive | 0.032 | **Microsecond** (`2011/08/10 09:46:53.047277`) → dense-timing rules **active** | actor endpoints chosen by shape (source/destination address) | **1.000** | **0.971** | **0.033** |
 | *Generality probe —* **CTU-13 scenario 3 (Rbot)** *(second family; recall and precision now generalise after the source fan-out fix)* | Stratosphere Lab, CTU University; **CC-BY** | Argus bidirectional NetFlow; 62,000 rows | Yes — directional `Label`; `From-Botnet` = positive | 0.0323 | **Microsecond** → dense-timing rules **active** | actor endpoints chosen by shape | 0.985 | 0.9319 | 0.034 |
 | *Secondary —* **UNSW-NB15 shard 1/4** *(broad IDS, not a bot capture)* | UNSW Canberra Cyber Range Lab; academic terms | Raw pcap-derived flow CSV (`UNSW-NB15_1.csv`, shard 1 of 4); 62,000 rows | Yes — `Label` 0/1 + `attack_cat` (9 mixed attack families) | 0.032 | Second-resolution `Stime` | `srcip` / `dstip` (now admitted at scale) | 1.000 | 0.519 | 0.062 |
-| *Domain-transfer, provisional —* **Bournemouth Web Bot Detection** *(web-log domain; negative result; licence-pending)* | CERTH ITI / Bournemouth University (m4d.iti.gr); **licence unclear** — research-use invited, copyright reserved | Apache access logs; 58,279 rows | Yes — folder label (`bots/` vs `humans/`) | 0.029 | Per-second | `session_id` now **admitted** by the scale-invariant selector → over-flags (the method limit, shown directly) | 0.873 | **0.028** | 0.918 |
+| *Domain-transfer, provisional —* **Bournemouth Web Bot Detection** *(web-log domain; negative result; licence-pending)* | CERTH ITI / Bournemouth University (m4d.iti.gr); **licence unclear** — research-use invited, copyright reserved | Apache access logs; 58,279 rows | Yes — folder label (`bots/` vs `humans/`) | 0.029 | Per-second | `session_id` only — the raw request-`path` pseudo-actor is now **demoted by value grammar** (follow-up I-b) | 0.474 | **0.020** | 0.682 |
 
 The first two rows are the **primary, bot-specific** benchmarks and are the current
 measured output on this branch. Both now hold high precision at recall ≥ 0.998
@@ -72,11 +72,14 @@ selector re-admits the IP actor columns) are read as a generality probe, not a
 bot-detection result — see its section below.
 
 The fifth row, **Bournemouth Web Bot Detection**, is a **web-log domain-transfer**
-probe and an honest **negative** result: precision (0.028) sits *below* the base rate
-(0.029), so on this dataset the detector does worse than chance. Its numbers are
-**provisional / local-internal**, not cleared for publication, because the dataset's
-licence is unclear (research use invited, copyright reserved). Read it as a
-domain-transfer finding, not a detector benchmark — see its section below.
+probe and an honest **negative** result: precision (0.020) sits *below* the base rate
+(0.029), so on this dataset the detector does worse than chance. The current figures
+follow the follow-up I-b fix, which demotes the raw request-`path` column from actor
+selection by value grammar — a content column had been occupying an identity seat and
+inflating both flag rate and apparent recall (see the stage history in its section
+below). Its numbers are **provisional / local-internal**, not cleared for publication,
+because the dataset's licence is unclear (research use invited, copyright reserved).
+Read it as a domain-transfer finding, not a detector benchmark — see its section below.
 
 Beyond the table, six further **secondary attack-coverage probes** cover the
 remaining labelled CICIDS2017 attack families (port scan, DDoS, web attacks,
@@ -551,9 +554,10 @@ counterfactuals were recorded **before** implementation; the verified pipeline
 re-runs above matched them at displayed precision, and the ML review independently
 re-ran the full registry. The seven rows outside the fallback regime — Ares
 (0.998/0.879/0.036), CTU-13 sc1 (1.000/0.971/0.033), CTU-13 sc3
-(0.985/0.932/0.034), UNSW (1.000/0.519/0.062), Bournemouth (0.873/0.028/0.918),
-PortScan (1.000/0.585/0.055) and DDoS (1.000/0.786/0.041) — did not move: the
-gated code path never executes there. Validation: full suite 94 passed,
+(0.985/0.932/0.034), UNSW (1.000/0.519/0.062), Bournemouth (0.873/0.028/0.918, its
+figure at that verification; since revised by the follow-up I-b path demotion — see
+its section), PortScan (1.000/0.585/0.055) and DDoS (1.000/0.786/0.041) — did not
+move: the gated code path never executes there. Validation: full suite 94 passed,
 `tests/test_rules.py` 16 passed, pylint 10.00/10, `black --check` clean,
 `git diff --check` clean, complete registry runs.
 
@@ -625,7 +629,8 @@ asks whether any of the method transfers, and the answer is largely *no*.
 | Run | Rows | Base rate | Flag rate | Recall | Precision |
 |---|---|---|---|---|---|
 | Bournemouth — cardinality-ratio band (session dormant) | 58,279 | 0.029 | 0.681 | 0.474 | 0.020 |
-| **Bournemouth — scale-invariant selection (session admitted)** | 58,279 | 0.029 | **0.918** | **0.873** | **0.028** |
+| Bournemouth — scale-invariant selection (session + raw `path` admitted) | 58,279 | 0.029 | 0.918 | 0.873 | 0.028 |
+| **Bournemouth — raw `path` demoted by value grammar (follow-up I-b, current)** | 58,279 | 0.029 | **0.682** | **0.474** | **0.020** |
 
 *Source: CERTH ITI / Bournemouth University, m4d.iti.gr (BORDaR record 272). Labels are
 dataset-provided (folder `bots/` vs `humans/`), not derived — so the ground truth is
@@ -636,39 +641,55 @@ honest even though the result is poor. No detector thresholds were tuned.*
 > population: treat this as a *qualitative* domain-transfer signal, **not** a
 > statistically robust precision/recall estimate.
 
-**How to read it — worse than chance, now shown directly.** Precision **0.028** sits
-*below* the 0.029 base rate: a flagged row is *less* likely to be a bot than a random
-one. The scale-invariant actor selection (no cardinality-ratio band) now **admits**
-`session_id` as a per-entity actor — and that is exactly what makes the method limit
-*visible* rather than hidden:
+**How to read it — worse than chance, still.** Precision **0.020** sits *below* the
+0.029 base rate: a flagged row is *less* likely to be a bot than a random one. The
+current figures follow the **follow-up I-b content demotion**: the previous stage's
+raw request-`path` column — *content*, not an identity — had passed the actor shape
+tests and occupied the directional **source seat** of the actor graph, firing
+`asymmetric_degree` on **53,467** of 58,279 rows. Demoting path-like values by grammar
+(leading-separator fraction, `CONTENT_LEADING_SEPARATOR_MIN = 0.9` in
+`bots_without_labels/features.py`) silences that rule entirely (**53,467 → 0** fires);
+every other rule's fire count is unchanged. What remains is the method limit proper:
 
-- **The session entity over-flags.** A session's per-entity monotony does **not**
-  separate an evasive web bot from a human — a monotone human session looks as
-  self-similar as a bot session — so `entity_monotony` fires on human sessions too.
-  This is the prediction the earlier Phase-1 experiment made when it *forced* the
-  session entity active (it caught **0 of 11** bot sessions and flagged monotone humans);
-  under scale-invariant selection it is now the default, and the flag rate climbs to
-  **~92%**. (A raw request-`path` column is also admitted as a pseudo-actor — content,
-  not identity; a known residual, see below.)
-- **Timing over-fires on page-load bursts.** The sub-second timing rules also misread the
-  natural burst of near-simultaneous requests a single web page-load generates as
-  automated cadence.
+- **The session entity still over-flags.** Entity columns are now `session_id` alone,
+  so the entity and actor graphs are inactive and `entity_monotony` runs the bare
+  single-column fallback — firing on the **same 8,191 rows** as before. A session's
+  per-entity monotony does **not** separate an evasive web bot from a human: the
+  earlier Phase-1 experiment that *forced* the session entity active caught **0 of 11**
+  bot sessions while flagging monotone humans.
+- **Timing over-fires on page-load bursts.** The timing rules misread the natural
+  burst of near-simultaneous requests a single web page-load generates as automated
+  cadence (`local_burst` 40,175 and `regular_timing` 44,322 fires); 39,748 of 58,279
+  rows stay flagged (0.682).
 
-**What this is — and is not.** It is a clean **domain-transfer negative**, now shown
-*directly*: the netflow-shaped signals (per-entity monotony, repetition, timing) do not
-separate human-mimicking web bots from humans, so admitting the session entity floods
-the output. It is **not** evidence the method is broken on its own domain — the netflow
-gates remain strong at their current post-decouple values (CICIDS 0.998 / 0.879 / 0.036,
-CTU-13 sc1 1.000 / 0.971 / 0.033, sc3 0.985 / 0.9319 / 0.034) — and it is **not** a
-fraud verdict.
+**Why recall fell 0.873 → 0.474 — and why that is not lost capability.** The earlier
+recall was carried by the `path` pseudo-actor's near-blanket `asymmetric_degree` fire:
+flagging 92% of all rows sweeps up most bot rows by volume. That was a *measurement
+artefact of the defect*, not detection. With the artefact removed the row returns to
+roughly the session-dormant profile (0.474 / 0.020 / 0.682, matching the first stage
+to displayed precision apart from flag 0.681 → 0.682) — the honest reading of what the
+netflow-shaped method achieves on this domain.
+
+**The demotion is a limited-evidence guardrail, not a web-bot model.** The grammar
+test rests on a narrow measurement (leading-separator fraction 1.000 on two web logs'
+raw path columns vs 0.000 on every admitted actor column across CTU-13 / CICIDS /
+UNSW / Bournemouth — see `evaluation/FOLLOWUP_HI_PHASE1_EVIDENCE.md`); it only stops
+content occupying an identity seat. It is **not** a Bournemouth recovery: the result
+stays a **domain-transfer negative** below base rate.
+
+**What this is — and is not.** It is a clean **domain-transfer negative**: the
+netflow-shaped signals (per-entity monotony, repetition, timing) do not separate
+human-mimicking web bots from humans. It is **not** evidence the method is broken on
+its own domain — the netflow gates remain strong at their current post-decouple values
+(CICIDS 0.998 / 0.879 / 0.036, CTU-13 sc1 1.000 / 0.971 / 0.033, sc3
+0.985 / 0.9319 / 0.034), and rows 1–7 of the registry were verified **bit-identical**
+under the Phase 2 change — and it is **not** a fraud verdict.
 
 **It is a method limit, not a selection bug.** Bot and human diversity, timing CV,
 request entropy and volume all overlap on web sessions, so no entity-selection choice
 recovers detection here. Closing this gap needs **web-specific signals** (interaction
 biometrics such as the mouse-movement data Bournemouth carries), a separate future
-capability — see `evaluation/FINDINGS.md` and `TODO.md` (P3, item 12). A related
-residual: a raw request-`path` field (non-URL-typed content) is still admitted as a
-pseudo-actor; generic content-column detection is tracked as a follow-up. The result
+capability — see `evaluation/FINDINGS.md` and `TODO.md` (P3, item 12). The result
 stays a negative (precision below base rate), provisional/licence-pending.
 
 Reproduce (the dataset is gitignored and licence-pending, so this is local/manual):

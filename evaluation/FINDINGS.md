@@ -372,13 +372,16 @@ unchanged. The **secondary** rows changed, because the fix now correctly admits 
 columns the ratio band was excluding: **UNSW-NB15** re-admits `srcip`/`dstip` (recall
 0.122 → 1.000, precision 0.198 → 0.519 — the actor signal now fires on this broad-IDS
 shard, still not a bot result), and **Bournemouth** admits the web `session_id`
-(flag 0.681 → 0.918, still a negative below the base rate — the session-entity method
-limit now shown *directly* rather than hidden by the band; see the Bournemouth
-section). No thresholds were tuned; the new constants are limited-evidence guardrails
-chosen with margin from the CTU-13 / CICIDS / UNSW measurements. **Honest residual**:
-a closed pool of *short, unstructured* ids (bare integers, usernames) is
-shape-ambiguous vs a vocabulary and is not detected — and a raw request-`path`
-content column is still admitted as a pseudo-actor; both are tracked follow-ups.
+(flag 0.681 → 0.918 at that stage, still a negative below the base rate — the
+session-entity method limit now shown *directly* rather than hidden by the band; see
+the Bournemouth section). No thresholds were tuned; the new constants are
+limited-evidence guardrails chosen with margin from the CTU-13 / CICIDS / UNSW
+measurements. **Honest residual**: a closed pool of *short, unstructured* ids (bare
+integers, usernames) is shape-ambiguous vs a vocabulary and is not detected — and a
+raw request-`path` content column was, at this stage, admitted as a pseudo-actor.
+Both became follow-ups H and I; the path pseudo-actor has since been demoted by value
+grammar and the short-id case answered with an explicit override — see "Actor and
+content residuals" below.
 
 ### The honest ceiling (CTU-13)
 
@@ -504,18 +507,22 @@ its numbers verified by rina (review #38226).*
 Everything above is *network-flow* data. The first test on a **different domain** —
 raw Apache access logs (Bournemouth Web Bot Detection) — is an honest **negative**, and
 recording it matters as much as the wins. On 58,279 rows (base rate 0.029, real
-folder-provided `bots/` vs `humans/` labels) the detector scored recall 0.873 and
-precision **0.028** — *below* the base rate, i.e. worse than chance. The scale-invariant
-actor selection (no cardinality-ratio band) now **admits** `session_id`, and that is
-what makes the method limit *visible*:
+folder-provided `bots/` vs `humans/` labels) the detector under scale-invariant actor
+selection scored recall 0.873 and precision **0.028** (flag 0.918) — *below* the base
+rate, i.e. worse than chance. The follow-up I-b fix (see "Actor and content residuals"
+below) later removed a raw request-`path` **pseudo-actor** from that run, and the
+current registry row reads recall **0.474**, precision **0.020**, flag **0.682** —
+still below base rate; the fix removed a defect's artefact, it did not recover
+detection. The scale-invariant actor selection (no cardinality-ratio band) **admits**
+`session_id`, and that is what makes the method limit *visible*:
 
 - **The session entity over-flags.** With `session_id` baselined as a per-entity actor,
   `entity_monotony` fires on human sessions too — a monotone human session is as
-  self-similar as a bot session — so the flag rate climbs to **~92%**. Under the old
-  cardinality-ratio band `session_id` fell out of range and stayed dormant (a quieter
-  68%-flag negative driven by timing alone); the scale-invariant selection shows the
-  limit directly. (A raw request-`path` content column is also admitted as a
-  pseudo-actor — content, not identity; a tracked residual.)
+  self-similar as a bot session. Under the old cardinality-ratio band `session_id` fell
+  out of range and stayed dormant (a quieter 68%-flag negative driven by timing alone);
+  the scale-invariant selection shows the limit directly. (At this stage a raw
+  request-`path` content column was also admitted as a pseudo-actor — content, not
+  identity — and drove the flag rate to ~92%; since demoted, see below.)
 - **Timing over-fires on page-load bursts.** The sub-second timing rules also misread the
   burst of near-simultaneous requests from a single web page-load as automated cadence.
 
@@ -562,8 +569,9 @@ continuity, status-code mix, HTTP-method fractions) separate the **hard** case �
 question, deliberately kept apart from the unsupervised detector: it asks whether the
 *signal exists*, not whether the pipeline finds it. The pipeline's own Phase-1 run
 reproduced the negative this session — precision **0.0276**, recall 0.873, flag rate
-0.918 (base 0.029) — and the floor any signal must beat is the method's **0 of 11** bot
-sessions.
+0.918 (base 0.029; the registry row has since moved to 0.474/0.020/0.682 under the
+follow-up I-b path demotion, still a negative) — and the floor any signal must beat is
+the method's **0 of 11** bot sessions.
 
 **Pre-registered bar:** a feature is promising *iff* it reaches AUC **≥ 0.75 train and
 ≥ 0.70 test** on `advanced_bot` vs `human`. Nothing clears it:
@@ -953,8 +961,9 @@ review), against prediction (recall / precision / flag rate):
 
 Zero prediction surprises at displayed precision. The seven protected rows —
 Ares 0.998/0.879/0.036, CTU-13 sc1 1.000/0.971/0.033, CTU-13 sc3 0.985/0.932/0.034,
-UNSW 1.000/0.519/0.062, Bournemouth 0.873/0.028/0.918, PortScan 1.000/0.585/0.055,
-DDoS 1.000/0.786/0.041 — did not move. Validation: full suite 94 passed,
+UNSW 1.000/0.519/0.062, Bournemouth 0.873/0.028/0.918 (its figure at that
+verification; since revised by the follow-up I-b path demotion — see the next
+section), PortScan 1.000/0.585/0.055, DDoS 1.000/0.786/0.041 — did not move. Validation: full suite 94 passed,
 `tests/test_rules.py` 16 passed, pylint 10.00/10, `black --check` clean,
 `git diff --check` clean.
 
@@ -972,6 +981,77 @@ DDoS 1.000/0.786/0.041 — did not move. Validation: full suite 94 passed,
   existing regression guards, not by a per-row decision-vector diff.
 - The moved numbers are **secondary attack-coverage measurements on one archive**;
   nothing here is bot-detection validation or a production-precision claim.
+
+## Actor and content residuals: explicit overrides and the path-grammar demotion (follow-ups H and I)
+
+The scale-invariant actor selection left three known residuals, all value-shape edge
+cases (follow-ups H and I): an **integer-coded identifier** (a numeric session id or
+IP) is typed numeric and never considered an actor (H); a **closed pool of short
+unstructured ids** is shape-ambiguous against a bounded vocabulary (I-a); and a **raw
+request-`path` column** — content, not identity — passed the actor shape tests (I-b).
+The third was not cosmetic. On Bournemouth the raw `path` column occupied the
+directional **source seat** of the actor graph and fired `asymmetric_degree` on
+**53,467** of 58,279 rows — most of the 0.918 flag rate, and the carrier of most of
+the apparent 0.873 recall.
+
+Phase 1 ran evidence-first diagnostics before any engine edit
+(`evaluation/FOLLOWUP_HI_PHASE1_EVIDENCE.md`, commit `f1aebbb`, with pre-run
+predictions for all eleven registry rows). Two findings shaped the fix. First,
+**heuristic inference for H and I-a is not shippable on current evidence**: numeric
+and short-unstructured identity shapes overlap ordinary measure and vocabulary
+columns too heavily to infer safely. Second, raw path content is **grammatically
+separable**: the fraction of distinct values whose first character is a separator
+measured **1.000** on two web logs' raw path columns and **0.000** on every admitted
+actor/entity column across the CTU-13 / CICIDS / UNSW / Bournemouth mixes.
+
+### The fix: explicit, default-off schema overrides plus a grammar demotion
+
+For H and I-a the engine now ships **overrides, not inference**: `run
+--entity-column COLUMN` (repeatable) declares an identity the detector cannot infer
+and routes it into the *same* actor/entity machinery as inferred actors — the
+identity-shape tests are bypassed, the volume/recurrence floors are kept, because
+they guard the statistical validity of the adaptive thresholds; `--content-column
+COLUMN` forces a column out of actor/entity selection when grammar and role
+inference are insufficient. Unknown or conflicting column names exit 2 with a
+message; overrides are recorded in `summary.json`. Both are **default-off**: with
+neither flag, behaviour is identical except for the one deliberate change below.
+
+For I-b, raw path-like content is **demoted from actor/entity selection by value
+grammar** (`_is_path_shaped` in `bots_without_labels/features.py`): a column whose
+distinct values start with a separator character at or above
+`CONTENT_LEADING_SEPARATOR_MIN = 0.9` is content, never an actor. It is a
+value-shape test — no column-name or dataset branch — and an explicit
+`--entity-column` declaration outranks it.
+
+The effect, verified end-to-end: the full-registry before/after output differs in
+**exactly one line**. Bournemouth moves flag/recall/precision **0.918 / 0.873 / 0.028
+→ 0.682 / 0.474 / 0.020**; rows 1–7 and 8–10 are byte-identical. On Bournemouth,
+`asymmetric_degree` fires **53,467 → 0** while every other rule's fire count is
+unchanged; entity columns reduce to `session_id` alone, the entity and actor graphs
+go inactive, and `entity_monotony` runs the bare single-column fallback on the
+**same 8,191 rows** as before (the one recorded Phase-1 prediction miss — it was
+predicted to increase under the fallback regime and did not). The recall drop is the
+point, not a loss: the removed fire was a near-blanket flag sweeping up bot rows by
+volume — a measurement artefact of the defect. Bournemouth remains a domain-transfer
+**negative below base rate**, and its numbers remain internal / provisional /
+licence-pending.
+
+*Verification: implemented by the ML pair and independently re-run under blocking ML
+review (niho; PM brief #42074, handoff #42093) against the Phase 1 evidence package.*
+
+### The honest ceiling (follow-ups H and I)
+
+- **`CONTENT_LEADING_SEPARATOR_MIN = 0.9` is a limited-evidence guardrail.** The
+  1.000-vs-0.000 separation rests on two web logs' raw path columns against four
+  mixes' admitted actor columns. It stops content occupying an identity seat; it is
+  **not** a web-bot model and **not** a Bournemouth recovery.
+- **H and I-a are override-supported, not solved.** Heuristic numeric / short-id
+  actor inference is recorded as not shippable on current evidence; the escape hatch
+  requires the user to know the identity column. No real registry row exercises the
+  override path — positive override behaviour is covered by unit fixtures
+  (`tests/test_schema_overrides.py`) only.
+- **The demotion changes exactly one registry row.** Everything it removed on
+  Bournemouth was false structure; nothing new is detected anywhere.
 
 ## Takeaway
 

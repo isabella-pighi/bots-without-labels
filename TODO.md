@@ -108,6 +108,18 @@ Old item E, second bullet: a `session ID` / numeric IP is typed numeric, so
 per-entity baselining and id handling miss it. Couples with the
 schema-override / entity-id hints in item 4.
 
+*Status: closed as override-supported (2026-07-15) — awaiting human owner merge
+approval; not yet landed.* Phase 1 diagnostics
+(`evaluation/FOLLOWUP_HI_PHASE1_EVIDENCE.md`, `f1aebbb`) recorded **heuristic**
+numeric-identifier inference as not shippable on current evidence: numeric identity
+shapes overlap ordinary measure columns too heavily to infer safely. What shipped
+instead is the explicit, default-off `run --entity-column` override (repeatable),
+which coerces a declared column into the same actor/entity machinery as inferred
+actors (identity-shape tests bypassed; volume/recurrence floors kept). Registry rows
+1–10 verified byte-identical with the flag unused. Inference itself stays open only
+if new evidence emerges. Full story in `evaluation/FINDINGS.md`, "Actor and content
+residuals".
+
 ### I. Actor-selection residuals from the scale-invariant fix (P2/P3)
 
 The scale-invariant actor selection (recurrence + repeat-mass + value shape,
@@ -123,6 +135,28 @@ edge cases:
   still admitted as a pseudo-actor and over-flags on web logs (visible in the
   Bournemouth secondary result). Generic content-column detection without value
   semantics is the open problem; couples with item 12.
+
+*Status: closed (2026-07-15) — awaiting human owner merge approval; not yet
+landed.* Both bullets resolved by the Phase 2 follow-up H/I slice, on the same
+evidence-first arc (`evaluation/FOLLOWUP_HI_PHASE1_EVIDENCE.md`, `f1aebbb`):
+
+- **I-a (short unstructured ids): override-supported, not inferred.** As with H,
+  heuristic inference is recorded as not shippable on current evidence; the explicit
+  `--entity-column` override is the supported route, pending a real closed-pool
+  capture that could justify revisiting inference.
+- **I-b (raw content columns): shipped as a value-grammar demotion.** Path-like
+  columns (distinct values leading with a separator at ≥
+  `CONTENT_LEADING_SEPARATOR_MIN = 0.9`) are demoted from actor/entity selection
+  (`_is_path_shaped`, `bots_without_labels/features.py`) — a value-shape test, no
+  column-name or dataset branch, plus an explicit `--content-column` override for
+  when grammar is insufficient. The constant is a **limited-evidence guardrail**
+  (leading-separator fraction 1.000 on two web logs' raw path columns vs 0.000 on
+  every admitted actor column across CTU-13/CICIDS/UNSW/Bournemouth), not a web-bot
+  model. Only Bournemouth moved — flag/recall/precision 0.918/0.873/0.028 →
+  0.682/0.474/0.020 (internal/provisional/licence-pending) — the removed recall was
+  a measurement artefact of the pseudo-actor's near-blanket fire, and the row stays
+  a domain-transfer negative below base rate. Rows 1–10 byte-identical. Full story
+  in `evaluation/FINDINGS.md`, "Actor and content residuals".
 
 ### J. Drift checker: flag citations of removed constants (P3)
 
@@ -176,8 +210,8 @@ predict–attribute–verify loop and cross-model review. It was deliberately no
 touched in the measurement-only follow-up F pass; evidence in
 `evaluation/FINDINGS.md`, "Attack-family coverage: the rest of CICIDS2017".
 
-*Status: implemented and reviewed (2026-07-13) — awaiting human owner merge
-approval; not yet landed.* The two-phase, evidence-first arc ran to completion:
+*Status: closed (2026-07-13) — landed on main as `aa03388` with human owner
+approval.* The two-phase, evidence-first arc ran to completion:
 Phase 1 attributed every fallback fire (floods are point-to-point channels, the
 BruteForce recall sits entirely on hub-shaped entities) and Phase 2 re-applies the
 existing structural hub gate (`MIN_HUB_DEGREE = 3`) inside the fallback regime via
@@ -189,7 +223,8 @@ displayed precision: BruteForce precision 0.168 → 0.600 with recall held 1.000
 WebAttacks flag 0.158 → 0.005 (recall still 0.000), Infiltration precision
 0.002 → 0.053, DoS precision 0.008 → 0.046 at flag 0.160 → 0.028 (still weak); all
 seven non-fallback registry rows unchanged. Because the change moves flag
-decisions, landing is held for explicit human owner approval. Full story in
+decisions, landing was held for explicit human owner approval, given 2026-07-13.
+Full story in
 `evaluation/FINDINGS.md`, "The fallback hub gate"; before/after registry detail in
 `evaluation/BENCHMARKS.md`.
 
@@ -244,6 +279,13 @@ calibration, all residual false positives were tier-3 (ML-only) flags.
   timestamp formats.
 - Optional user hints (which column is the timestamp / entity id) when
   autodetection is uncertain.
+
+*Status: partially delivered (2026-07-15, entity/content hints only — awaiting
+human owner merge approval).* The follow-up H/I slice added explicit, default-off
+schema overrides for the *identity* half of the hint idea: `run --entity-column`
+declares an actor/entity column autodetection cannot see, `run --content-column`
+forces a column out of actor/entity selection. Gzip input, extra timestamp
+formats, and a timestamp-column hint remain open.
 
 ### 5. Robust scaling for heavy-tailed features — DONE (measured-negative)
 

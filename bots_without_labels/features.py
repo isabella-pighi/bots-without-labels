@@ -529,7 +529,8 @@ def _unique_char_ratio(value: str) -> float:
 
 
 def _is_content_column(col: ColumnSchema) -> bool:
-    """True for a URL or URL-derived column -- *content*, never an actor.
+    """True for a URL / URL-derived / user-declared content column -- *content*,
+    never an actor.
 
     A URL path, query parameter, or referer is what is being requested, not who
     is requesting it. Such columns can be high-cardinality, recurring, and
@@ -537,10 +538,46 @@ def _is_content_column(col: ColumnSchema) -> bool:
     past the recurrence + shape actor tests; excluding them by role/derivation
     keeps them out of the per-entity baseline and the actor graph. Measured on
     the Bournemouth web logs: without this guard, ``path`` and ``referer__path``
-    were wrongly baselined as actors and flooded the output.
+    were wrongly baselined as actors and flooded the output. The explicit
+    ``--content-column`` override (``content_override``) forces the same
+    exclusion when grammar and role inference are insufficient.
     """
 
-    return col.role == Role.URL or col.derived_from is not None
+    return col.role == Role.URL or col.derived_from is not None or col.content_override
+
+
+CONTENT_LEADING_SEPARATOR_MIN = 0.9
+"""LIMITED-EVIDENCE GUARDRAIL separating raw *content* values from identities
+by value grammar: the fraction of a column's distinct values whose FIRST
+character is a separator (``. : _ - /``). A raw request-path column measured
+1.000 on both a minimal web-log fixture and the Bournemouth capture, while
+every genuine admitted actor/entity column measured 0.000 across the CTU-13 /
+CICIDS / UNSW / Bournemouth mixes (addresses, session ids, user agents) -- see
+``evaluation/FOLLOWUP_HI_PHASE1_EVIDENCE.md``. 0.9 is chosen with margin from
+those measurements; like ``rules.DEGREE_ASYMMETRY`` it is calibrated against
+limited evidence, not a scale-free law, and it is NOT a web-bot model -- it
+only stops content occupying an identity seat (TODO follow-up I-b)."""
+
+_LEADING_SEPARATORS = frozenset(".:_-/")
+"""The separator alphabet of :func:`_is_path_shaped`; matches the separator
+class of :data:`_STRUCTURED_TOKEN_RE`."""
+
+
+def _is_path_shaped(values: list[str]) -> bool:
+    """True when a column's distinct ``values`` are grammatically content-like.
+
+    A value-shape test (never a column-name or dataset branch): raw path-like
+    content starts with a separator character (``/products/42``), identities
+    (addresses, session tokens, usernames) start with an alphanumeric. Columns
+    at or above :data:`CONTENT_LEADING_SEPARATOR_MIN` are demoted from actor /
+    entity selection. An explicit ``--entity-column`` override bypasses this
+    test -- the user's declaration outranks the heuristic.
+    """
+
+    if not values:
+        return False
+    leading = sum(1 for value in values if value and value[0] in _LEADING_SEPARATORS)
+    return leading / len(values) >= CONTENT_LEADING_SEPARATOR_MIN
 
 
 def _repeat_mass(counts: pd.Series, n_rows: int) -> float:
@@ -608,13 +645,19 @@ def _entity_columns(
     per-entity baseline -- the role the old cardinality-ratio floor served, now
     done by value shape so it survives at any log size. Residual: a closed pool
     of short unstructured ids (bare integers, usernames) is shape-ambiguous vs a
-    vocabulary and not detected here (TODO follow-up H).
+    vocabulary and not detected here (TODO follow-up H) -- the explicit
+    ``--entity-column`` override is the supported escape hatch: it bypasses the
+    identity-shape tests (content, vocabulary, path grammar) but NOT the
+    volume/recurrence floors, which guard the statistical validity of the
+    adaptive thresholds. Raw path-like content is demoted by value grammar
+    (:func:`_is_path_shaped`, TODO follow-up I-b).
     """
 
     out: list[str] = []
     for name in categoricals:
         col = schema.column(name)
-        if col is not None and _is_content_column(col):
+        override = col is not None and col.entity_override
+        if not override and col is not None and _is_content_column(col):
             continue
         counts = frame[name].value_counts()
         distinct = len(counts)
@@ -622,8 +665,12 @@ def _entity_columns(
             continue
         if float(counts.median()) < ENTITY_MEDIAN_RECURRENCE_MIN:
             continue
-        if _is_vocabulary([str(v) for v in counts.index], distinct):
-            continue
+        if not override:
+            distinct_values = [str(v) for v in counts.index]
+            if _is_vocabulary(distinct_values, distinct):
+                continue
+            if _is_path_shaped(distinct_values):
+                continue
         out.append(name)
     return out
 
@@ -750,7 +797,11 @@ def _actor_endpoint_columns(frame: pd.DataFrame, schema: Schema) -> list[str]:
     capture dominated by one-off peers still exposes its few high-volume hubs.
 
     Residual: a closed pool of short unstructured ids (bare integers, usernames)
-    is shape-ambiguous vs a vocabulary and not detected (TODO follow-up H).
+    is shape-ambiguous vs a vocabulary and not detected (TODO follow-up H) --
+    the explicit ``--entity-column`` override is the supported escape hatch: it
+    bypasses the identity-shape tests (content, vocabulary, path grammar) but
+    NOT the volume/recurrence floors. Raw path-like content is demoted by value
+    grammar (:func:`_is_path_shaped`, TODO follow-up I-b).
     """
 
     n_rows = int(frame.shape[0])
@@ -758,7 +809,7 @@ def _actor_endpoint_columns(frame: pd.DataFrame, schema: Schema) -> list[str]:
     for col in schema.columns:
         if col.role not in (Role.CATEGORICAL, Role.TEXT):
             continue
-        if _is_content_column(col):
+        if not col.entity_override and _is_content_column(col):
             continue
         if col.n_unique <= ACTOR_MIN_DISTINCT:
             continue
@@ -767,8 +818,12 @@ def _actor_endpoint_columns(frame: pd.DataFrame, schema: Schema) -> list[str]:
             continue
         if _repeat_mass(counts, n_rows) < REPEAT_MASS_MIN:
             continue
-        if _is_vocabulary([str(v) for v in counts.index], int(col.n_unique)):
-            continue
+        if not col.entity_override:
+            distinct_values = [str(v) for v in counts.index]
+            if _is_vocabulary(distinct_values, int(col.n_unique)):
+                continue
+            if _is_path_shaped(distinct_values):
+                continue
         out.append(col.name)
     return out
 

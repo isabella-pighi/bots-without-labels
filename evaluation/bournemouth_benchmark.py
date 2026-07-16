@@ -28,22 +28,28 @@ Label / entity / timestamp mapping (confirmed before trusting numbers):
       requests and cross-checks the ``annotations`` files; ``user_agent`` is a
       second entity. TIMESTAMP is per-second.
     * Consequence (as MEASURED on this data, reported not tuned): the actor
-      selectors are now scale-invariant (they key on recurrence + value shape, not
+      selectors are scale-invariant (they key on recurrence + value shape, not
       the old cardinality ratio), so the recurring ``session_id`` IS admitted as a
       per-entity actor here -- which *directly* demonstrates the method limit
       rather than hiding it. A session's per-entity monotony does NOT separate an
       evasive web bot from a human: both a bot session and a monotone human session
-      look self-similar, so ``entity_monotony`` fires on human sessions too and the
-      detector over-flags (~92% of rows, precision 0.028 -- still *below* the ~0.029
-      base rate, i.e. worse than guessing). ``user_agent`` is near-constant (the
-      advanced/moderate bots spoof real browser UAs -- only ~4 distinct UAs), and
-      the timing rules over-fire on dense page-load bursts. This is a real
-      domain-transfer limit -- the NetFlow-shaped signals (repetition, monotony,
-      timing) do not transfer to human-mimicking web bots; closing it needs
-      web-specific signals (interaction biometrics), tracked in TODO item 12. It is
-      NOT tuned around. (A raw request-``path`` column is also still admitted as a
-      pseudo-actor -- content, not an identity; generic content-column detection
-      for non-URL-typed path fields is a known residual, TODO follow-up H/12.)
+      look self-similar, so ``entity_monotony`` fires on human sessions too (via
+      the bare single-column fallback -- ``session_id`` is the sole entity column,
+      so the entity/actor graphs are inactive). ``user_agent`` is near-constant
+      (the advanced/moderate bots spoof real browser UAs -- only ~4 distinct UAs),
+      and the timing rules over-fire on dense page-load bursts; the detector still
+      flags ~68% of rows at precision ~0.02, *below* the ~0.029 base rate, i.e.
+      worse than guessing. This is a real domain-transfer limit -- the
+      NetFlow-shaped signals (repetition, monotony, timing) do not transfer to
+      human-mimicking web bots; closing it needs web-specific signals (interaction
+      biometrics), tracked in TODO item 12. It is NOT tuned around. (An earlier
+      stage of this row read ~92% flagged / precision 0.028: a raw request-``path``
+      column was then admitted as a pseudo-actor -- content, not an identity --
+      and its near-blanket ``asymmetric_degree`` fire carried most of that flag
+      rate and apparent recall. Raw path-like content is now demoted from
+      actor/entity selection by value grammar, TODO follow-up I-b; the removal is
+      a guardrail fix, not a recovery, and the row stays a negative. See
+      evaluation/BENCHMARKS.md for the stage history.)
 
 Native balance is near-even (phase1: ~38.9k bot / ~57.5k human requests). For
 comparability with the ~3% rare-attack NetFlow mixes we keep all human requests as
@@ -202,9 +208,12 @@ def main(argv: list[str] | None = None) -> int:
             "Bournemouth Web Bot Detection (web-log domain-transfer)",
             report,
             notes=(
-                "web-log domain-transfer; session entity + actor graph DORMANT "
-                "(session ratio below the actor band), timing+ML only; licence "
-                "research-use (not formally specified)",
+                "web-log domain-transfer; raw request-path demoted from actor "
+                "selection by value grammar (follow-up I-b), so the actor graph "
+                "does not fire; session_id sole entity via the bare monotony "
+                "fallback, timing over-fires on page-load bursts; precision "
+                "remains below the base rate; licence research-use (not formally "
+                "specified) -- numbers internal pending confirmation",
             ),
         )
     )

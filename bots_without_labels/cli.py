@@ -152,6 +152,29 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument(
         "--output-dir", default=".", help="Directory for artifacts and predictions.tsv"
     )
+    run_parser.add_argument(
+        "--entity-column",
+        action="append",
+        default=[],
+        metavar="COLUMN",
+        help=(
+            "Explicitly declare COLUMN an actor/entity column (repeatable). "
+            "Use when autodetection cannot see an identity — an integer-coded "
+            "session id or IP, or a closed pool of short unstructured ids. "
+            "Default off: without this flag behaviour is unchanged."
+        ),
+    )
+    run_parser.add_argument(
+        "--content-column",
+        action="append",
+        default=[],
+        metavar="COLUMN",
+        help=(
+            "Explicitly declare COLUMN content, excluding it from actor/entity "
+            "selection (repeatable). Use when a content-like column (e.g. a "
+            "raw request path) is misread as an identity. Default off."
+        ),
+    )
 
     generate_parser = subparsers.add_parser(
         "generate", help="Write a synthetic example log with planted bots"
@@ -188,7 +211,17 @@ def main(argv: list[str] | None = None) -> int:
         if input_error is not None:
             print(input_error, file=sys.stderr)
             return 2
-        summary = run_pipeline(input_path, Path(args.output_dir))
+        try:
+            summary = run_pipeline(
+                input_path,
+                Path(args.output_dir),
+                entity_columns=tuple(args.entity_column),
+                content_columns=tuple(args.content_column),
+            )
+        except ValueError as exc:
+            # Unknown/conflicting override names are user errors, not crashes.
+            print(str(exc), file=sys.stderr)
+            return 2
         print(json.dumps(summary, indent=2))
         return 0
     if args.command == "generate":

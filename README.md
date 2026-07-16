@@ -128,6 +128,31 @@ uv run jupyter lab    # then open notebooks/bots_without_labels.ipynb
 Point `generate`, `run`, or `load(...)` at any CSV/TSV/JSON file. Logs dropped under
 `data/` are gitignored.
 
+### Schema overrides (optional, default-off)
+
+The detector infers which columns are identities (actors/entities) and which are
+content from value shape alone. Two explicit `run` flags exist for the cases
+inference cannot decide — they are escape hatches that require you to know your
+log's schema, not heuristics:
+
+```bash
+# Declare a column the detector cannot recognize as an identity — e.g. an
+# integer-coded session id or a pool of short usernames (repeatable):
+uv run --extra eif python -m bots_without_labels.cli run \
+  --input data/mylog.csv --output-dir run-output --entity-column session_id
+
+# Force a content-like column (e.g. a raw request path) out of actor/entity
+# selection when its values don't reveal it as content (repeatable):
+uv run --extra eif python -m bots_without_labels.cli run \
+  --input data/mylog.csv --output-dir run-output --content-column request_path
+```
+
+Without these flags, behavior is unchanged. A `--entity-column` gets the same
+actor/entity treatment as inferred identities (the identity-shape tests are
+bypassed; the volume/recurrence floors still apply). Unknown or conflicting column
+names exit with an error, and any overrides used are recorded in
+`artifacts/summary.json`.
+
 ## Running against Kaggle or Hugging Face datasets
 
 `run` takes a **local** CSV/TSV/JSON file — there is no built-in dataset fetcher.

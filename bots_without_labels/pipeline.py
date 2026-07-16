@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -177,6 +178,8 @@ def run_pipeline(
     *,
     display_input_path: str | Path | None = None,
     max_output_events: int = MAX_SELECTED_EVENTS,
+    entity_columns: Sequence[str] = (),
+    content_columns: Sequence[str] = (),
 ) -> dict[str, object]:
     """Load a log, run detection, and write predictions and artefacts.
 
@@ -187,6 +190,10 @@ def run_pipeline(
         display_input_path: Optional path/name to record in the summary.
         max_output_events: Cap on the flagged rows written to
             ``artifacts/selected_events.json`` (highest combined score first).
+        entity_columns: Explicit, default-off ``--entity-column`` schema
+            overrides forwarded to :func:`~bots_without_labels.ingest.load`.
+        content_columns: Explicit, default-off ``--content-column`` schema
+            overrides forwarded to :func:`~bots_without_labels.ingest.load`.
 
     Returns:
         A summary dictionary, also written to ``artifacts/summary.json``.
@@ -205,7 +212,11 @@ def run_pipeline(
     artifacts = root / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
 
-    loaded = load(input_path)
+    loaded = load(
+        input_path,
+        entity_columns=entity_columns,
+        content_columns=content_columns,
+    )
     frame, schema = loaded.frame, loaded.schema
     result = detect(frame, schema)
 
@@ -229,6 +240,8 @@ def run_pipeline(
         "bot_rate": bot_count / max(n_rows, 1),
         "decision_rule": DECISION_RULE,
         "heuristic_cutoff": HEURISTIC_CUTOFF,
+        "entity_column_overrides": list(entity_columns),
+        "content_column_overrides": list(content_columns),
         "ml_threshold": result.ml_threshold,
         "ml_threshold_method": result.ml_threshold_method,
         "ml_backend": result.ml_backend,
