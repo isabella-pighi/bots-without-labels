@@ -180,6 +180,7 @@ def run_pipeline(
     max_output_events: int = MAX_SELECTED_EVENTS,
     entity_columns: Sequence[str] = (),
     content_columns: Sequence[str] = (),
+    timestamp_column: str | None = None,
 ) -> dict[str, object]:
     """Load a log, run detection, and write predictions and artefacts.
 
@@ -194,6 +195,8 @@ def run_pipeline(
             overrides forwarded to :func:`~bots_without_labels.ingest.load`.
         content_columns: Explicit, default-off ``--content-column`` schema
             overrides forwarded to :func:`~bots_without_labels.ingest.load`.
+        timestamp_column: Explicit, default-off ``--timestamp-column`` schema
+            override forwarded to :func:`~bots_without_labels.ingest.load`.
 
     Returns:
         A summary dictionary, also written to ``artifacts/summary.json``.
@@ -216,6 +219,7 @@ def run_pipeline(
         input_path,
         entity_columns=entity_columns,
         content_columns=content_columns,
+        timestamp_column=timestamp_column,
     )
     frame, schema = loaded.frame, loaded.schema
     result = detect(frame, schema)
@@ -242,6 +246,7 @@ def run_pipeline(
         "heuristic_cutoff": HEURISTIC_CUTOFF,
         "entity_column_overrides": list(entity_columns),
         "content_column_overrides": list(content_columns),
+        "timestamp_column_override": timestamp_column,
         "ml_threshold": result.ml_threshold,
         "ml_threshold_method": result.ml_threshold_method,
         "ml_backend": result.ml_backend,

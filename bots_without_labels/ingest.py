@@ -23,6 +23,7 @@ Loading is a three-step pipeline:
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import re
 from collections.abc import Sequence
@@ -76,7 +77,22 @@ KNOWN_DATETIME_FORMATS = (
     "%m/%d/%Y %H:%M:%S",
     "%d-%m-%Y %H:%M:%S",
     "%d %b %Y %H:%M:%S",
+    # Broader coverage (appended so every previously-matching column keeps its
+    # original first match; only columns that used to fall through to the
+    # "mixed" fallback can re-path, to the same parsed instants):
+    "%Y-%m-%d %H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y/%m/%d %H:%M:%S.%f",
+    "%d/%b/%Y:%H:%M:%S %z",
+    "%d/%b/%Y:%H:%M:%S",
+    "%d.%m.%Y %H:%M:%S",
 )
+
+GZIP_MAGIC = b"\x1f\x8b"
+"""The two-byte gzip header. Compression is detected by content, not filename,
+so a mis-named gzipped log still loads; the ``.gz`` suffix is only stripped for
+extension-based format detection."""
 
 _URL_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+|\?\S*=", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"^\S{1,64}$")
@@ -122,6 +138,10 @@ class ColumnSchema:
         content_override: True when the user explicitly declared this column
             content (``--content-column``); it is excluded from actor/entity
             selection like a URL column.
+        timestamp_override: True when the user explicitly declared this column
+            the timestamp (``--timestamp-column``). The column is coerced to
+            the timestamp role (its values must actually parse as datetimes)
+            and becomes ``schema.primary_timestamp``.
     """
 
     name: str
@@ -135,6 +155,7 @@ class ColumnSchema:
     numeric_subtype: str | None = None
     entity_override: bool = False
     content_override: bool = False
+    timestamp_override: bool = False
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable representation of the column schema."""
@@ -151,6 +172,7 @@ class ColumnSchema:
             "numeric_subtype": self.numeric_subtype,
             "entity_override": self.entity_override,
             "content_override": self.content_override,
+            "timestamp_override": self.timestamp_override,
         }
 
 
@@ -250,13 +272,15 @@ def load(
     expand_urls: bool = True,
     entity_columns: Sequence[str] = (),
     content_columns: Sequence[str] = (),
+    timestamp_column: str | None = None,
 ) -> LoadedLog:
     """Load any supported log into a typed table with an inferred schema.
 
     Args:
-        path: Path to a CSV, TSV, JSON array, or JSON-lines log. Files are
-            decoded as UTF-8 with undecodable bytes replaced, so a stray
-            non-UTF-8 byte never aborts a load.
+        path: Path to a CSV, TSV, JSON array, or JSON-lines log, optionally
+            gzip-compressed (detected by content, ``.gz`` suffix stripped for
+            format detection). Files are decoded as UTF-8 with undecodable
+            bytes replaced, so a stray non-UTF-8 byte never aborts a load.
         expand_urls: When true, detected URL columns have their query string
             expanded into new ``<column>__<param>`` columns (plus
             ``<column>__path``) before schema inference.
@@ -269,6 +293,11 @@ def load(
             the user declares to be content (a raw request path); each is
             marked ``content_override`` and excluded from actor/entity
             selection.
+        timestamp_column: Explicit, default-off schema override: the column
+            the user declares to be the timestamp when autodetection would
+            choose the wrong one or miss a parseable-but-ambiguous one. The
+            column's values must parse as datetimes; it becomes the primary
+            timestamp.
 
     Returns:
         A :class:`LoadedLog`.
@@ -276,8 +305,9 @@ def load(
     Raises:
         FileNotFoundError: If ``path`` does not exist.
         ValueError: If the file is empty or cannot be parsed, if an override
-            names a column that does not exist, or if the same column is named
-            in both overrides.
+            names a column that does not exist, if the same column is named in
+            more than one override, or if a forced timestamp column does not
+            parse as datetimes.
     """
 
     file_path = Path(path).expanduser()
@@ -298,6 +328,7 @@ def load(
         derived=derived,
         entity_columns=entity_columns,
         content_columns=content_columns,
+        timestamp_column=timestamp_column,
     )
     typed = _typed_frame(raw, schema)
     return LoadedLog(frame=typed, schema=schema, path=str(file_path))
@@ -324,16 +355,37 @@ def read_table(path: str | Path) -> tuple[pd.DataFrame, str]:
     """
 
     file_path = Path(path).expanduser()
-    sample = file_path.read_bytes()[:MAX_SAMPLE_BYTES].decode("utf-8", errors="replace")
+    gzipped = _is_gzipped(file_path)
+    if gzipped:
+        with gzip.open(file_path, "rb") as handle:
+            head = handle.read(MAX_SAMPLE_BYTES)
+        sample = head.decode("utf-8", errors="replace")
+    else:
+        sample = file_path.read_bytes()[:MAX_SAMPLE_BYTES].decode(
+            "utf-8", errors="replace"
+        )
     if not sample.strip():
         raise ValueError(f"Log file '{file_path}' is empty")
 
-    source_format = _detect_format(file_path, sample)
+    # A trailing .gz is packaging, not format: detect the format from the
+    # inner name (access.csv.gz -> access.csv) and the decompressed sample.
+    detect_path = file_path
+    if gzipped and file_path.suffix.lower() == ".gz":
+        detect_path = file_path.with_suffix("")
+
+    source_format = _detect_format(detect_path, sample)
     if source_format in ("json", "jsonl"):
-        frame = _read_json(file_path, source_format)
+        frame = _read_json(file_path, source_format, gzipped=gzipped)
     else:
-        frame = _read_delimited(file_path, source_format, sample)
+        frame = _read_delimited(file_path, source_format, sample, gzipped=gzipped)
     return _stringify(frame), source_format
+
+
+def _is_gzipped(path: Path) -> bool:
+    """True when the file starts with the gzip magic bytes."""
+
+    with path.open("rb") as handle:
+        return handle.read(2) == GZIP_MAGIC
 
 
 def infer_schema(
@@ -343,6 +395,7 @@ def infer_schema(
     derived: dict[str, str] | None = None,
     entity_columns: Sequence[str] = (),
     content_columns: Sequence[str] = (),
+    timestamp_column: str | None = None,
 ) -> Schema:
     """Classify each column of an all-string frame into a :class:`Role`.
 
@@ -356,13 +409,16 @@ def infer_schema(
             before the primary timestamp / row id are picked, so a coerced
             column can never simultaneously hold those posts.
         content_columns: Explicit user override — see :func:`load`.
+        timestamp_column: Explicit user override — see :func:`load`. The
+            forced column wins the primary-timestamp post.
 
     Returns:
         The inferred :class:`Schema`.
 
     Raises:
-        ValueError: If an override names an unknown column or the same column
-            appears in both overrides.
+        ValueError: If an override names an unknown column, the same column
+            appears in more than one override, or a forced timestamp column
+            does not parse as datetimes.
     """
 
     derived = derived or {}
@@ -370,7 +426,7 @@ def infer_schema(
         _classify_column(name, raw[name], derived_from=derived.get(name))
         for name in raw.columns
     ]
-    _apply_overrides(columns, entity_columns, content_columns)
+    _apply_overrides(columns, entity_columns, content_columns, timestamp_column, raw)
     schema = Schema(
         columns=columns,
         n_rows=int(raw.shape[0]),
@@ -378,6 +434,8 @@ def infer_schema(
     )
     schema.url_columns = schema.columns_with_role(Role.URL)
     schema.primary_timestamp = _pick_primary_timestamp(columns)
+    if timestamp_column is not None:
+        schema.primary_timestamp = timestamp_column
     schema.row_id = _pick_row_id(columns)
     return schema
 
@@ -386,27 +444,43 @@ def _apply_overrides(
     columns: list[ColumnSchema],
     entity_columns: Sequence[str],
     content_columns: Sequence[str],
+    timestamp_column: str | None,
+    raw: pd.DataFrame,
 ) -> None:
     """Mark explicit user schema overrides on ``columns``, in place.
 
-    Default-off: with both sequences empty (the default everywhere) this is a
+    Default-off: with no overrides given (the default everywhere) this is a
     no-op and behaviour is identical to inference alone. An entity override
     coerces the column to the categorical role so the typed frame keeps its raw
     string values and the standard categorical/entity/actor machinery sees it;
     identity-shape tests are bypassed downstream via the ``entity_override``
     mark (see ``features._entity_columns`` / ``_actor_endpoint_columns``).
     A content override only marks the column; exclusion happens in
-    ``features._is_content_column``.
+    ``features._is_content_column``. A timestamp override coerces the column
+    to the timestamp role after checking its values actually parse (a forced
+    column that silently became all-``NaT`` would just disable the timing
+    rules without telling the user); the pure-number guard on *inference* is
+    kept — the override does not bypass parseability, only column *choice*.
     """
 
-    overlap = set(entity_columns) & set(content_columns)
-    if overlap:
-        raise ValueError(
-            "Columns named as both entity and content overrides: "
-            + ", ".join(sorted(overlap))
-        )
+    named = {
+        "entity": set(entity_columns),
+        "content": set(content_columns),
+        "timestamp": {timestamp_column} if timestamp_column is not None else set(),
+    }
+    for kind_a, kind_b in (
+        ("entity", "content"),
+        ("entity", "timestamp"),
+        ("content", "timestamp"),
+    ):
+        overlap = named[kind_a] & named[kind_b]
+        if overlap:
+            raise ValueError(
+                f"Columns named as both {kind_a} and {kind_b} overrides: "
+                + ", ".join(sorted(overlap))
+            )
     by_name = {col.name: col for col in columns}
-    for kind, names in (("entity", entity_columns), ("content", content_columns)):
+    for kind, names in named.items():
         unknown = [name for name in names if name not in by_name]
         if unknown:
             raise ValueError(
@@ -423,6 +497,23 @@ def _apply_overrides(
             col.numeric_subtype = None
     for name in content_columns:
         by_name[name].content_override = True
+    if timestamp_column is not None:
+        col = by_name[timestamp_column]
+        series = raw[timestamp_column]
+        sample = series[~_missing_mask(series)].head(SAMPLE_SIZE)
+        datetime_format, is_ts = _timestamp_format(sample)
+        if not is_ts:
+            parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
+            if parsed.notna().mean() < PARSE_RATE:
+                raise ValueError(
+                    f"Timestamp-column override '{timestamp_column}' does not "
+                    f"parse as datetimes (fewer than {PARSE_RATE:.0%} of "
+                    "sampled values are recognisable)"
+                )
+        col.timestamp_override = True
+        col.role = Role.TIMESTAMP
+        col.datetime_format = datetime_format
+        col.numeric_subtype = None
 
 
 # --- Format detection & reading ---------------------------------------------
@@ -470,7 +561,9 @@ def _sniff_delimiter(sample: str) -> str:
         return "\t" if sample.count("\t") > sample.count(",") else ","
 
 
-def _read_delimited(path: Path, source_format: str, sample: str) -> pd.DataFrame:
+def _read_delimited(
+    path: Path, source_format: str, sample: str, *, gzipped: bool = False
+) -> pd.DataFrame:
     sep = "\t" if source_format == "tsv" else _sniff_delimiter(sample)
     try:
         has_header = csv.Sniffer().has_header(sample)
@@ -486,6 +579,7 @@ def _read_delimited(path: Path, source_format: str, sample: str) -> pd.DataFrame
         engine="python",
         encoding="utf-8",
         encoding_errors="replace",
+        compression="gzip" if gzipped else "infer",
     )
     if not has_header:
         frame.columns = [f"col{i}" for i in range(frame.shape[1])]
@@ -494,10 +588,17 @@ def _read_delimited(path: Path, source_format: str, sample: str) -> pd.DataFrame
     return frame
 
 
-def _read_json(path: Path, source_format: str) -> pd.DataFrame:
+def _read_json(
+    path: Path, source_format: str, *, gzipped: bool = False
+) -> pd.DataFrame:
+    def open_text():
+        if gzipped:
+            return gzip.open(path, "rt", encoding="utf-8", errors="replace")
+        return path.open("r", encoding="utf-8", errors="replace")
+
     if source_format == "jsonl":
         records = []
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
+        with open_text() as handle:
             for line_number, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:
@@ -509,7 +610,7 @@ def _read_json(path: Path, source_format: str) -> pd.DataFrame:
                         f"Line {line_number} is not valid JSON: {exc}"
                     ) from exc
     else:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
+        with open_text() as handle:
             data = json.load(handle)
         records = _records_from_json(data)
     return pd.json_normalize(records)

@@ -175,6 +175,16 @@ def main(argv: list[str] | None = None) -> int:
             "raw request path) is misread as an identity. Default off."
         ),
     )
+    run_parser.add_argument(
+        "--timestamp-column",
+        default=None,
+        metavar="COLUMN",
+        help=(
+            "Explicitly declare COLUMN the timestamp. Use when autodetection "
+            "picks the wrong timestamp column or misses an ambiguous one; the "
+            "values must parse as datetimes. Default off."
+        ),
+    )
 
     generate_parser = subparsers.add_parser(
         "generate", help="Write a synthetic example log with planted bots"
@@ -217,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
                 Path(args.output_dir),
                 entity_columns=tuple(args.entity_column),
                 content_columns=tuple(args.content_column),
+                timestamp_column=args.timestamp_column,
             )
         except ValueError as exc:
             # Unknown/conflicting override names are user errors, not crashes.
